@@ -1,0 +1,9 @@
+node_modules
+server/node_modules
+.next
+.git
+*.log
+.env
+terminals
+agent-transcripts
+docker

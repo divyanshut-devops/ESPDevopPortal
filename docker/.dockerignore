@@ -1,0 +1,4 @@
+*
+!Dockerfile
+!docker-compose.yml
+!esp-pty.py

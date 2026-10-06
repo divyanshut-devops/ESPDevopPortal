@@ -1,0 +1,100 @@
+name: esp-devops
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: esp-devops-web:16.3.8
+    container_name: esp-web
+    ports:
+      - "1100:1100"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "1100"
+      HOST: 0.0.0.0
+      NEXT_EMBED: "1"
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1100}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:1100}
+      CORS_CREDENTIALS: ${CORS_CREDENTIALS:-true}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ""
+      REDIS_URL: redis://redis:6379
+      DOCKER_COMPOSE_FILE: /compose/docker-compose.yml
+      DOCKER_TERMINAL_CONTAINER: esp-linux-shell
+      DOCKER_TERMINAL_SERVICE: linux
+      DOCKER_TERMINAL_IMAGE: esp-devops-linux:22.04
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-compose.yml:/compose/docker-compose.yml:ro
+      - ./docker:/compose/docker:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      linux:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:1100/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 40s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: esp-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  linux:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile
+    image: esp-devops-linux:22.04
+    container_name: esp-linux-shell
+    hostname: esp-shell
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    volumes:
+      - linux-workspace:/workspace
+    environment:
+      TERM: xterm-256color
+      LANG: C.UTF-8
+    command: ["sleep", "infinity"]
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "test", "-x", "/usr/local/bin/esp-pty"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  linux-workspace:
+  redis-data:
