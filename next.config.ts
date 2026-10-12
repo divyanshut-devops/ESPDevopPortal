@@ -4,6 +4,17 @@ const nextConfig: NextConfig = {
   output: 'standalone',
   reactStrictMode: true,
   devIndicators: false,
+  serverExternalPackages: [
+    'mongoose',
+    'express',
+    'jsonwebtoken',
+    'nodemailer',
+    'multer',
+    'qrcode',
+    '@aws-sdk/client-s3',
+    'cors',
+    'dotenv',
+  ],
   async headers() {
     return [
       {

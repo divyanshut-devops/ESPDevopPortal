@@ -1,9 +1,24 @@
 import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
+import { IBM_Plex_Sans, JetBrains_Mono } from 'next/font/google'
 import 'bootstrap/dist/css/bootstrap.min.css'
 import 'bootstrap-icons/font/bootstrap-icons.css'
 import '../index.css'
 import { Providers } from './providers'
+
+const sans = IBM_Plex_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  variable: '--font-sans-face',
+})
+
+const mono = JetBrains_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  display: 'swap',
+  variable: '--font-mono-face',
+})
 
 export const metadata: Metadata = {
   title: 'ESP DevOps Portal',
@@ -31,15 +46,14 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" data-theme="dark" data-bs-theme="dark" data-scroll-behavior="smooth" suppressHydrationWarning>
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html
+      lang="en"
+      className={`${sans.variable} ${mono.variable}`}
+      data-theme="dark"
+      data-bs-theme="dark"
+      data-scroll-behavior="smooth"
+      suppressHydrationWarning
+    >
       <body suppressHydrationWarning>
         <Providers>{children}</Providers>
       </body>
