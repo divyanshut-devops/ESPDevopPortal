@@ -269,12 +269,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [applyAccount])
 
   const addSecret = useCallback(async (secret: Omit<SecretVariable, 'id'>) => {
-    const data = await createSecret({ name: secret.key.trim(), value: secret.value })
+    const data = await createSecret({
+      name: secret.key.trim(),
+      value: secret.value,
+      env: secret.environment,
+      remark: secret.remark.trim(),
+    })
     setSecrets((current) => [toSecretVariable(data.secret), ...current])
   }, [])
 
   const updateSecret = useCallback(async (secret: SecretVariable) => {
-    const data = await updateSecretApi(secret.id, { name: secret.key.trim(), value: secret.value })
+    const data = await updateSecretApi(secret.id, {
+      name: secret.key.trim(),
+      value: secret.value,
+      env: secret.environment,
+      remark: secret.remark.trim(),
+    })
     const next = toSecretVariable(data.secret)
     setSecrets((current) => current.map((item) => (item.id === next.id ? next : item)))
   }, [])

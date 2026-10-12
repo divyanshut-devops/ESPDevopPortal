@@ -520,10 +520,18 @@ app.post('/api/notifications/test', authUser, requireDb, async (req, res) => {
   return res.json({ user: publicUser(user, accessPayload(req.user.email)), message: 'Test notification sent' })
 })
 
+const SECRET_ENVS = new Set(['dev', 'staging', 'prod'])
+
+function secretEnv(value) {
+  return SECRET_ENVS.has(value) ? value : 'dev'
+}
+
 function publicSecret(doc) {
   return {
     id: String(doc._id),
     name: doc.name,
+    env: secretEnv(doc.env),
+    remark: doc.remark || '',
     value: decryptSecret(doc.valueEncrypted),
     updatedAt: doc.updatedAt,
   }
@@ -547,6 +555,8 @@ app.post('/api/secrets', authUser, requireDb, requirePrivilege('secrets.manage')
     const doc = await Secret.create({
       ownerEmail: req.user.email,
       name,
+      env: secretEnv(req.body?.env),
+      remark: String(req.body?.remark || '').trim().slice(0, 500),
       valueEncrypted: encryptSecret(value),
     })
     await addNotification(req.user.email, {
@@ -566,6 +576,8 @@ app.patch('/api/secrets/:id', authUser, requireDb, requirePrivilege('secrets.man
     const doc = await Secret.findOne({ _id: req.params.id, ownerEmail: req.user.email })
     if (!doc) return res.status(404).json({ message: 'Secret not found' })
     if (typeof req.body?.name === 'string' && req.body.name.trim()) doc.name = req.body.name.trim()
+    if (typeof req.body?.env === 'string') doc.env = secretEnv(req.body.env)
+    if (typeof req.body?.remark === 'string') doc.remark = req.body.remark.trim().slice(0, 500)
     if (typeof req.body?.value === 'string' && req.body.value) doc.valueEncrypted = encryptSecret(req.body.value)
     await doc.save()
     return res.json({ secret: publicSecret(doc) })

@@ -1,21 +1,25 @@
 import { authFetch } from './http'
 import type { SecretVariable } from '../types'
 
+export type SecretEnv = 'dev' | 'staging' | 'prod'
+
 export interface StoredSecret {
   id: string
   name: string
+  env?: SecretEnv
+  remark?: string
   value: string
   updatedAt?: string
 }
 
 export function toSecretVariable(item: StoredSecret): SecretVariable {
+  const environment = item.env === 'staging' || item.env === 'prod' || item.env === 'dev' ? item.env : 'dev'
   return {
     id: item.id,
     key: item.name,
     value: item.value,
-    description: '',
-    environment: 'Production',
-    projectId: '',
+    environment,
+    remark: item.remark || '',
   }
 }
 
@@ -23,14 +27,14 @@ export async function fetchSecrets() {
   return authFetch<{ secrets: StoredSecret[] }>('/api/secrets')
 }
 
-export async function createSecret(payload: { name: string; value: string }) {
+export async function createSecret(payload: { name: string; value: string; env: SecretEnv; remark: string }) {
   return authFetch<{ secret: StoredSecret }>('/api/secrets', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
-export async function updateSecretApi(id: string, payload: { name?: string; value?: string }) {
+export async function updateSecretApi(id: string, payload: { name?: string; value?: string; env?: SecretEnv; remark?: string }) {
   return authFetch<{ secret: StoredSecret }>(`/api/secrets/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),

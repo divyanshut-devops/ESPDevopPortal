@@ -12,9 +12,8 @@ export interface SecretVariable {
   id: string
   key: string
   value: string
-  description: string
-  environment: Environment
-  projectId: string
+  environment: 'dev' | 'staging' | 'prod'
+  remark: string
 }
 
 export interface Shortcut {
