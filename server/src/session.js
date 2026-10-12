@@ -45,7 +45,7 @@ function cookieBase() {
 export function setSessionCookie(res, token) {
   res.cookie(SESSION_COOKIE, token, {
     ...cookieBase(),
-    maxAge: 12 * 60 * 60 * 1000,
+    maxAge: 24 * 60 * 60 * 1000,
   })
 }
 

@@ -8,10 +8,10 @@ import { useApp } from '../context/AppContext'
 import { getNavItem } from '../navigation'
 import type { SearchResult } from '../types'
 
-function formatHeaderStamp(now: Date, timezone: string) {
-  const tz = timezone || 'UTC'
+function formatHeaderStamp(now: Date) {
+  const timeZone = 'Asia/Kolkata'
   try {
-    const parts = new Intl.DateTimeFormat('en-GB', {
+    const parts = new Intl.DateTimeFormat('en-IN', {
       weekday: 'short',
       day: '2-digit',
       month: 'short',
@@ -20,21 +20,21 @@ function formatHeaderStamp(now: Date, timezone: string) {
       minute: '2-digit',
       second: '2-digit',
       hour12: false,
-      timeZone: tz,
+      timeZone,
     }).formatToParts(now)
     const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value || ''
     return {
       weekday: get('weekday'),
       date: `${get('day')} ${get('month')} ${get('year')}`,
       time: `${get('hour')}:${get('minute')}:${get('second')}`,
-      tz,
+      tz: 'IST',
     }
   } catch {
     return {
-      weekday: now.toLocaleDateString([], { weekday: 'short' }),
-      date: now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-      tz,
+      weekday: now.toLocaleDateString('en-IN', { weekday: 'short', timeZone }),
+      date: now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone }),
+      time: now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone }),
+      tz: 'IST',
     }
   }
 }
@@ -65,7 +65,7 @@ export function Header() {
   const [now, setNow] = useState(() => new Date())
   const headerRef = useRef<HTMLElement>(null)
   const unread = visibleNotifications.filter((item) => !item.read).length
-  const stamp = formatHeaderStamp(now, profile.timezone)
+  const stamp = formatHeaderStamp(now)
 
   const results = useMemo<SearchResult[]>(() => {
     const q = query.trim().toLowerCase()

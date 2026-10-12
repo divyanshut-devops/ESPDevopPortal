@@ -20,7 +20,7 @@ const userSchema = new mongoose.Schema(
     workspaceName: { type: String, default: 'ESP DevOps' },
     role: { type: String, default: 'DevOps Member' },
     team: { type: String, default: 'Platform Engineering' },
-    timezone: { type: String, default: 'UTC' },
+    timezone: { type: String, default: 'Asia/Kolkata' },
     dateFormat: { type: String, default: 'YYYY-MM-DD' },
     avatarUrl: { type: String, default: '' },
     theme: { type: String, default: 'dark' },

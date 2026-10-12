@@ -86,7 +86,7 @@ function accessPayload(email, storedRole) {
 }
 
 function signSession(email) {
-  return jwt.sign({ email }, jwtSecret, { expiresIn: '12h' })
+  return jwt.sign({ email }, jwtSecret, { expiresIn: '1d' })
 }
 
 function fallbackUser(email) {
@@ -97,7 +97,7 @@ function fallbackUser(email) {
     workspaceName: 'ESP DevOps',
     role: access.role,
     team: access.team,
-    timezone: 'UTC',
+    timezone: 'Asia/Kolkata',
     dateFormat: 'YYYY-MM-DD',
     privileges: access.privileges,
     theme: 'dark',
