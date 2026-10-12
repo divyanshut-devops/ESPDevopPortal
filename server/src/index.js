@@ -532,7 +532,6 @@ function publicSecret(doc) {
     name: doc.name,
     env: secretEnv(doc.env),
     remark: doc.remark || '',
-    value: decryptSecret(doc.valueEncrypted),
     updatedAt: doc.updatedAt,
   }
 }
@@ -568,6 +567,18 @@ app.post('/api/secrets', authUser, requireDb, requirePrivilege('secrets.manage')
     return res.status(201).json({ secret: publicSecret(doc) })
   } catch (error) {
     return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to save secret' })
+  }
+})
+
+app.post('/api/secrets/:id/reveal', authUser, requireDb, requirePrivilege('secrets.view'), async (req, res) => {
+  try {
+    const doc = await Secret.findOne({ _id: req.params.id, ownerEmail: req.user.email })
+    if (!doc) return res.status(404).json({ message: 'Secret not found' })
+    const value = decryptSecret(doc.valueEncrypted)
+    if (!value) return res.status(500).json({ message: 'Unable to decrypt this secret.' })
+    return res.json({ value })
+  } catch (error) {
+    return res.status(error.status || 500).json({ message: error instanceof Error ? error.message : 'Unable to decrypt this secret.' })
   }
 })
 

@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { revealSecret } from '../api/secrets'
 import { Modal } from '../components/Modal'
 import { Pagination } from '../components/Pagination'
 import { useApp } from '../context/AppContext'
@@ -38,7 +39,7 @@ export function SecretsEnv() {
   const { secrets, addSecret, updateSecret, deleteSecret, pushToast, can, preferences } = useApp()
   const canManage = can('secrets.manage')
   const [query, setQuery] = useState('')
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({})
+  const [revealed, setRevealed] = useState<Record<string, string>>({})
   const [mode, setMode] = useState<'create' | 'edit' | 'import' | 'delete' | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [importText, setImportText] = useState('')
@@ -101,6 +102,39 @@ export function SecretsEnv() {
       pushToast(error instanceof Error ? error.message : 'Unable to save secret', 'error')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const plaintext = async (id: string) => {
+    if (revealed[id]) return revealed[id]
+    const data = await revealSecret(id)
+    return data.value
+  }
+
+  const toggleReveal = async (id: string) => {
+    if (revealed[id]) {
+      setRevealed((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+      return
+    }
+    try {
+      const value = await plaintext(id)
+      setRevealed((current) => ({ ...current, [id]: value }))
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Unable to decrypt secret', 'error')
+    }
+  }
+
+  const copySecret = async (id: string) => {
+    try {
+      const value = await plaintext(id)
+      await navigator.clipboard.writeText(value)
+      pushToast('Value copied')
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Unable to copy', 'warning')
     }
   }
 
@@ -187,7 +221,8 @@ export function SecretsEnv() {
         <div className="secret-list">
           <div className="secret-grid">
             {paged.rows.map((secret) => {
-              const open = Boolean(revealed[secret.id])
+              const open = revealed[secret.id] != null
+              const shown = open ? revealed[secret.id] : ''
               return (
                 <article className={`secret-card ${open ? 'is-open' : ''}`} key={secret.id}>
                   <div className="secret-card-head">
@@ -202,13 +237,13 @@ export function SecretsEnv() {
                     </div>
                   </div>
                   <div className="secret-value-well">
-                    <code>{open ? secret.value : maskSecret(secret.value)}</code>
+                    <code>{open ? shown : maskSecret('')}</code>
                   </div>
                   <div className="secret-card-actions">
                     <button
                       type="button"
                       className="secret-action"
-                      onClick={() => setRevealed((current) => ({ ...current, [secret.id]: !current[secret.id] }))}
+                      onClick={() => void toggleReveal(secret.id)}
                     >
                       <i className={`bi ${open ? 'bi-eye-slash' : 'bi-eye'}`} />
                       {open ? 'Hide' : 'Reveal'}
@@ -216,14 +251,7 @@ export function SecretsEnv() {
                     <button
                       type="button"
                       className="secret-action"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(secret.value)
-                          pushToast('Value copied')
-                        } catch {
-                          pushToast('Unable to copy', 'warning')
-                        }
-                      }}
+                      onClick={() => void copySecret(secret.id)}
                     >
                       <i className="bi bi-clipboard" />
                       Copy

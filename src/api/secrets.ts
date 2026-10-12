@@ -8,7 +8,7 @@ export interface StoredSecret {
   name: string
   env?: SecretEnv
   remark?: string
-  value: string
+  value?: string
   updatedAt?: string
 }
 
@@ -17,7 +17,7 @@ export function toSecretVariable(item: StoredSecret): SecretVariable {
   return {
     id: item.id,
     key: item.name,
-    value: item.value,
+    value: item.value || '',
     environment,
     remark: item.remark || '',
   }
@@ -39,6 +39,10 @@ export async function updateSecretApi(id: string, payload: { name?: string; valu
     method: 'PATCH',
     body: JSON.stringify(payload),
   })
+}
+
+export async function revealSecret(id: string) {
+  return authFetch<{ value: string }>(`/api/secrets/${id}/reveal`, { method: 'POST' })
 }
 
 export async function deleteSecretApi(id: string) {
