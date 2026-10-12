@@ -19,6 +19,6 @@ export const NAV_ITEMS: NavItem[] = [
 
 export const ALL_NAV_ITEMS: NavItem[] = [DASHBOARD_ITEM, ...NAV_ITEMS]
 
-export function getNavItem(pathname: string): NavItem {
+export function getNavItem(pathname: string | null): NavItem {
   return ALL_NAV_ITEMS.find((item) => item.path === pathname) ?? DASHBOARD_ITEM
 }
