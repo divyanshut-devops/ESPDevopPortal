@@ -31,7 +31,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
   try {
     response = await fetch(apiUrl(path), { ...init, credentials: 'same-origin' })
   } catch {
-    throw new Error('API is not running. Use docker compose up or npm run dev.')
+    throw new Error('API is not running. Start it with npm run dev.')
   }
   return parseResponse<T>(response)
 }

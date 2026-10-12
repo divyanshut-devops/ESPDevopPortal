@@ -50,7 +50,6 @@ export function Header() {
     markOneRead,
     projects,
     shortcuts,
-    servers,
     setTheme,
     theme,
     logout,
@@ -74,15 +73,12 @@ export function Header() {
     const pages: SearchResult[] = [
       { id: 'p-dash', title: 'Dashboard', subtitle: 'Overview', path: '/dashboard', icon: 'bi-speedometer2' },
       { id: 'p-proj', title: 'My Projects', subtitle: 'Projects', path: '/project-inventory', icon: 'bi-folder2-open' },
+      { id: 'p-git', title: 'ESP Git Username', subtitle: 'Company Git users', path: '/git-usernames', icon: 'bi-github' },
       { id: 'p-sec', title: 'Secrets', subtitle: 'Encrypted vault', path: '/secrets-env', icon: 'bi-key' },
       { id: 'p-net', title: 'Network', subtitle: 'Infrastructure', path: '/network-management', icon: 'bi-hdd-network' },
-      { id: 'p-post', title: 'API Studio', subtitle: 'HTTP requests', path: '/api-testing', icon: 'bi-send' },
-      { id: 'p-gen', title: 'Dev Generators', subtitle: 'Scripts and manifests', path: '/dev-generator', icon: 'bi-cpu' },
       { id: 'p-quick', title: 'Quick Access', subtitle: 'Shortcuts', path: '/quick-access', icon: 'bi-lightning-charge' },
       { id: 'p-drive', title: 'Personal Drive', subtitle: 'Private files', path: '/personal-drive', icon: 'bi-cloud-arrow-up' },
       { id: 'p-docs', title: 'Documentation', subtitle: 'Notes and runbooks', path: '/documentation', icon: 'bi-journal-text' },
-      { id: 'p-arch', title: 'Architecture', subtitle: 'System design board', path: '/architecture', icon: 'bi-bezier2' },
-      { id: 'p-term', title: 'Terminal', subtitle: 'Docker Linux bash', path: '/terminal', icon: 'bi-terminal' },
       { id: 'p-set', title: 'Settings', subtitle: 'Preferences', path: '/settings', icon: 'bi-gear' },
       { id: 'p-invite', title: 'Invitation', subtitle: 'Invite users', path: '/invitation', icon: 'bi-envelope' },
     ]
@@ -91,7 +87,7 @@ export function Header() {
       ...projects.map((project) => ({
         id: project.id,
         title: project.name,
-        subtitle: project.domain,
+        subtitle: project.domainIp || project.env,
         path: '/project-inventory',
         icon: 'bi-folder2',
       })),
@@ -102,17 +98,10 @@ export function Header() {
         path: '/quick-access',
         icon: shortcut.icon,
       })),
-      ...servers.map((server) => ({
-        id: server.id,
-        title: server.name,
-        subtitle: server.ip,
-        path: '/terminal',
-        icon: 'bi-hdd',
-      })),
     ]
       .filter((item) => item.title.toLowerCase().includes(q) || item.subtitle.toLowerCase().includes(q))
       .slice(0, 8)
-  }, [projects, query, servers, shortcuts])
+  }, [projects, query, shortcuts])
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000)

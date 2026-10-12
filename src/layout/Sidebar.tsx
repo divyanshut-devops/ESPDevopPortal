@@ -18,11 +18,8 @@ export function Sidebar() {
   const items = useMemo(
     () =>
       NAV_ITEMS.filter((item) => {
-        if (item.path === '/api-testing') return can('postman.use')
         if (item.path === '/invitation') return can('invitations.manage')
-        if (item.path === '/dev-generator') return can('generator.use')
         if (item.path === '/personal-drive') return can('drive.view')
-        if (item.path === '/terminal') return can('ssh.connect')
         return true
       }),
     [can],

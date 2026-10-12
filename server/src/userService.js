@@ -1,45 +1,17 @@
 import crypto from 'node:crypto'
 import { User } from './models/User.js'
 
-function seedNotifications() {
-  return [
-    {
-      id: crypto.randomUUID(),
-      title: 'Welcome to ESP DevOps',
-      message: 'Your account is ready. Notification alerts are turned on.',
-      time: 'Just now',
-      read: false,
-      type: 'success',
-      category: 'inApp',
-    },
-    {
-      id: crypto.randomUUID(),
-      title: 'Deploy completed',
-      message: 'Auth Service rolled out to production.',
-      time: '3 hr ago',
-      read: false,
-      type: 'success',
-      category: 'deployments',
-    },
-    {
-      id: crypto.randomUUID(),
-      title: 'Secret change recorded',
-      message: 'A production secret was updated from Settings.',
-      time: 'Yesterday',
-      read: true,
-      type: 'info',
-      category: 'secrets',
-    },
-    {
-      id: crypto.randomUUID(),
-      title: 'Infrastructure warning',
-      message: 'staging.esp.io certificate expires in 12 days.',
-      time: '1 hr ago',
-      read: false,
-      type: 'warning',
-      category: 'infrastructure',
-    },
-  ]
+const MOCK_NOTIFICATIONS = [
+  ['Welcome to ESP DevOps', 'Your account is ready. Notification alerts are turned on.'],
+  ['Deploy completed', 'Auth Service rolled out to production.'],
+  ['Secret change recorded', 'A production secret was updated from Settings.'],
+  ['Infrastructure warning', 'staging.esp.io certificate expires in 12 days.'],
+]
+
+function withoutMockNotifications(items = []) {
+  return items.filter(
+    (item) => !MOCK_NOTIFICATIONS.some(([title, message]) => item?.title === title && item?.message === message),
+  )
 }
 
 function plain(value) {
@@ -93,13 +65,15 @@ export async function ensureUser(email, access) {
       role: access.role,
       team: access.team,
       privileges: access.privileges,
-      notifications: seedNotifications(),
+      notifications: [],
     })
   } else {
     user.role = access.role
     user.team = access.team
     user.privileges = access.privileges
     if (!user.name) user.name = access.name
+    const notifications = withoutMockNotifications(user.notifications)
+    if (notifications.length !== user.notifications.length) user.notifications = notifications
     await user.save()
   }
   return user

@@ -1,938 +1,433 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
-import { fetchWorkbook, saveWorkbook, type CellStyle, type WorkbookSheet } from '../api/workbook'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  createProject,
+  deleteProject,
+  fetchProjects,
+  updateProject,
+  type ProjectEnv,
+  type ProjectInput,
+  type ProjectRecord,
+} from '../api/projects'
+import { DataTable } from '../components/DataTable'
+import { Modal } from '../components/Modal'
 import { useApp } from '../context/AppContext'
-import { uid } from '../utils'
 
-const STORAGE_KEY = 'esp-devops-workbook-v2'
-const MIN_ROWS = 41
-const MIN_COLS = 12
-const FONTS = ['Inter', 'Arial', 'Calibri', 'Georgia', 'Times New Roman', 'Verdana', 'Tahoma', 'Courier New', 'JetBrains Mono', 'IBM Plex Sans']
-const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36]
+const ENV_OPTIONS: { value: ProjectEnv; label: string }[] = [
+  { value: 'dev', label: 'Dev' },
+  { value: 'staging', label: 'Staging' },
+  { value: 'prod', label: 'Prod' },
+]
 
-type Pos = { r: number; c: number }
-
-function colLetter(index: number) {
-  let n = index + 1
-  let label = ''
-  while (n > 0) {
-    const rem = (n - 1) % 26
-    label = String.fromCharCode(65 + rem) + label
-    n = Math.floor((n - 1) / 26)
-  }
-  return label
+const emptyForm: ProjectInput = {
+  name: '',
+  githubUrl: '',
+  githubBranch: '',
+  env: 'dev',
+  techStack: '',
+  deploymentMethod: '',
+  domainIp: '',
+  cicdEnabled: false,
+  cicdTool: '',
+  cicdUrl: '',
+  cicdConfig: '',
+  dockerEnabled: false,
+  dockerImage: '',
+  dockerfilePath: '',
+  dockerRegistry: '',
+  k8sEnabled: false,
+  k8sCluster: '',
+  k8sNamespace: '',
+  k8sManifest: '',
+  remark: '',
 }
 
-function styleKey(r: number, c: number) {
-  return `${r}:${c}`
+function envLabel(env: ProjectEnv) {
+  return ENV_OPTIONS.find((item) => item.value === env)?.label || env
 }
 
-function emptyRow(cols: number) {
-  return Array.from({ length: cols }, () => '')
-}
-
-function padSheet(sheet: WorkbookSheet): WorkbookSheet {
-  const width = Math.max(MIN_COLS, ...(sheet.rows || []).map((row) => row.length), 8)
-  const rows = (sheet.rows || []).map((row) => {
-    const next = (row || []).map((cell) => String(cell ?? ''))
-    while (next.length < width) next.push('')
-    return next.slice(0, 40)
-  })
-  while (rows.length < MIN_ROWS) rows.push(emptyRow(width))
-  return { id: sheet.id || uid(), name: sheet.name || 'Sheet', rows, styles: sheet.styles || {} }
-}
-
-function headerStyles(count: number): Record<string, CellStyle> {
-  const styles: Record<string, CellStyle> = {}
-  for (let c = 0; c < count; c += 1) styles[styleKey(0, c)] = { bold: true, color: '#f8fafc' }
-  return styles
-}
-
-function templateWorkbook(): { sheets: WorkbookSheet[]; activeId: string } {
-  const make = (id: string, name: string, headers: string[]): WorkbookSheet =>
-    padSheet({
-      id,
-      name,
-      rows: [headers],
-      styles: headerStyles(Math.max(headers.length, MIN_COLS)),
-    })
-  const sheets = [
-    make('inventory', 'Inventory', [
-      'Project',
-      'Owner',
-      'Repo',
-      'Branch',
-      'Stack',
-      'Cloud',
-      'Region',
-      'Cluster',
-      'Namespace',
-      'Domain',
-      'Env',
-      'Status',
-      'Last deploy',
-      'Notes',
-    ]),
-    make('servers', 'Servers', ['Hostname', 'IP', 'OS', 'Role', 'Project', 'Env', 'Access', 'CPU/RAM', 'Status', 'Notes']),
-    make('domains', 'Domains', ['Domain', 'Project', 'Env', 'TLS expiry', 'DNS', 'CDN', 'Status', 'Notes']),
-    make('releases', 'Releases', [
-      'Project',
-      'Version',
-      'Env',
-      'Deployed at',
-      'Git SHA',
-      'Pipeline',
-      'Result',
-      'Notes',
-    ]),
-  ]
-  return { sheets, activeId: sheets[0].id }
-}
-
-function loadLocal(): { sheets: WorkbookSheet[]; activeId: string } | null {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
-    if (raw?.sheets?.length) {
-      return {
-        sheets: raw.sheets.map(padSheet),
-        activeId: raw.activeId || raw.sheets[0].id,
-      }
-    }
-  } catch {
-    /* start clean */
-  }
-  return null
-}
-
-function toCsv(rows: string[][]) {
-  return rows
-    .filter((row) => row.some((cell) => String(cell).trim()))
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    .join('\n')
-}
-
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = []
-  let row: string[] = []
-  let cell = ''
-  let quoted = false
-  const source = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  for (let i = 0; i < source.length; i += 1) {
-    const ch = source[i]
-    if (quoted) {
-      if (ch === '"' && source[i + 1] === '"') {
-        cell += '"'
-        i += 1
-      } else if (ch === '"') quoted = false
-      else cell += ch
-      continue
-    }
-    if (ch === '"') quoted = true
-    else if (ch === ',') {
-      row.push(cell)
-      cell = ''
-    } else if (ch === '\n') {
-      row.push(cell)
-      rows.push(row)
-      row = []
-      cell = ''
-    } else cell += ch
-  }
-  if (cell.length || row.length) {
-    row.push(cell)
-    rows.push(row)
-  }
-  return rows.filter((item) => item.some((value) => value.trim()))
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-function inRange(pos: Pos, a: Pos, b: Pos) {
-  const r1 = Math.min(a.r, b.r)
-  const r2 = Math.max(a.r, b.r)
-  const c1 = Math.min(a.c, b.c)
-  const c2 = Math.max(a.c, b.c)
-  return pos.r >= r1 && pos.r <= r2 && pos.c >= c1 && pos.c <= c2
-}
-
-function mergeStyle(current: CellStyle | undefined, patch: CellStyle) {
-  const next: CellStyle = { ...current }
-  for (const [key, value] of Object.entries(patch) as Array<[keyof CellStyle, CellStyle[keyof CellStyle]]>) {
-    if (value === false || value === '' || value == null) delete next[key]
-    else (next as Record<string, unknown>)[key] = value
-  }
-  return Object.keys(next).length ? next : undefined
-}
-
-function cellCss(style: CellStyle | undefined, header = false): CSSProperties {
-  const size = style?.size || 13
-  return {
-    fontWeight: style?.bold || header ? 700 : 400,
-    fontStyle: style?.italic ? 'italic' : 'normal',
-    textDecoration: style?.underline ? 'underline' : 'none',
-    fontFamily: style?.font || 'Inter, Arial, sans-serif',
-    fontSize: `${size}px`,
-    color: style?.color || (header ? '#f8fafc' : undefined),
-    background: style?.bg || undefined,
-    textAlign: style?.align || 'left',
-    minHeight: `${Math.max(28, size + 12)}px`,
-    height: `${Math.max(28, size + 12)}px`,
-    lineHeight: `${Math.max(28, size + 12)}px`,
-  }
-}
-
-function styleToCss(style: CellStyle | undefined, header = false) {
-  const css = cellCss(style, header)
-  return Object.entries(css)
-    .filter(([, value]) => value != null && value !== '')
-    .map(([key, value]) => `${key.replace(/[A-Z]/g, (ch) => `-${ch.toLowerCase()}`)}:${value}`)
-    .join(';')
+function yesDetail(enabled: boolean, detail: string) {
+  if (!enabled) return 'No'
+  return detail.trim() || 'Yes'
 }
 
 export function ProjectInventory() {
-  const { pushToast, can, profile } = useApp()
+  const { can, profile, pushToast } = useApp()
   const canEdit = can('projects.view') && profile.role !== 'Viewer'
-  const fileRef = useRef<HTMLInputElement>(null)
-  const gridRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const formulaRef = useRef<HTMLInputElement>(null)
-  const readyRef = useRef(false)
-  const skipSave = useRef(true)
-  const saveTimer = useRef(0)
-  const sheetsRef = useRef<WorkbookSheet[]>([])
-  const [sheets, setSheets] = useState<WorkbookSheet[]>([])
-  const [activeId, setActiveId] = useState('inventory')
-  const [saveState, setSaveState] = useState('Loading…')
-  const [sel, setSel] = useState<Pos>({ r: 1, c: 0 })
-  const [anchor, setAnchor] = useState<Pos>({ r: 1, c: 0 })
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
-  const [renameId, setRenameId] = useState<string | null>(null)
-  const draftRef = useRef('')
-  const activeIdRef = useRef(activeId)
-
-  sheetsRef.current = sheets
-  activeIdRef.current = activeId
-  const sheet = sheets.find((item) => item.id === activeId) || sheets[0]
-  const rows = sheet?.rows || []
-  const cols = rows[0]?.length || MIN_COLS
-  const cellValue = rows[sel.r]?.[sel.c] || ''
-  const currentStyle = sheet?.styles?.[styleKey(sel.r, sel.c)] || {}
-  const address = `${colLetter(sel.c)}${sel.r + 1}`
-
-  const usedRows = useMemo(
-    () => rows.filter((row, index) => index > 0 && row.some((cell) => String(cell).trim())).length,
-    [rows],
-  )
-
-  const mutateSheet = useCallback(
-    (updater: (current: WorkbookSheet) => WorkbookSheet) => {
-      if (!canEdit) return
-      const id = activeIdRef.current
-      const next = sheetsRef.current.map((item) => (item.id === id ? padSheet(updater(item)) : item))
-      sheetsRef.current = next
-      setSheets(next)
-    },
-    [canEdit],
-  )
-
-  const setCell = useCallback(
-    (r: number, c: number, value: string) => {
-      mutateSheet((current) => {
-        const next = current.rows.map((row) => row.slice())
-        while (next.length <= r) next.push(emptyRow(next[0]?.length || MIN_COLS))
-        while (next[r].length <= c) next.forEach((row) => row.push(''))
-        next[r][c] = value
-        return { ...current, rows: next }
-      })
-    },
-    [mutateSheet],
-  )
-
-  const applyStyle = useCallback(
-    (patch: CellStyle, toggle?: keyof CellStyle) => {
-      if (!canEdit) return
-      mutateSheet((current) => {
-        const styles = { ...(current.styles || {}) }
-        const r1 = Math.min(anchor.r, sel.r)
-        const r2 = Math.max(anchor.r, sel.r)
-        const c1 = Math.min(anchor.c, sel.c)
-        const c2 = Math.max(anchor.c, sel.c)
-        let turnOn = true
-        if (toggle) {
-          const keys = []
-          for (let r = r1; r <= r2; r += 1) {
-            for (let c = c1; c <= c2; c += 1) keys.push(styleKey(r, c))
-          }
-          turnOn = keys.some((key) => !styles[key]?.[toggle])
-        }
-        for (let r = r1; r <= r2; r += 1) {
-          for (let c = c1; c <= c2; c += 1) {
-            const key = styleKey(r, c)
-            const nextPatch = toggle ? { [toggle]: turnOn } : patch
-            const merged = mergeStyle(styles[key], nextPatch as CellStyle)
-            if (merged) styles[key] = merged
-            else delete styles[key]
-          }
-        }
-        return { ...current, styles }
-      })
-    },
-    [anchor.c, anchor.r, canEdit, mutateSheet, sel.c, sel.r],
-  )
-
-  const commitEdit = useCallback(() => {
-    if (!editing) return
-    setCell(sel.r, sel.c, draftRef.current)
-    setEditing(false)
-  }, [editing, sel.c, sel.r, setCell])
-
-  const liveCell = useCallback(
-    (r = sel.r, c = sel.c) =>
-      sheetsRef.current.find((item) => item.id === activeIdRef.current)?.rows[r]?.[c] || '',
-    [sel.c, sel.r],
-  )
-
-  const startEdit = useCallback(
-    (value?: string, fromFormula = false) => {
-      if (!canEdit) return
-      setDraft(value ?? liveCell())
-      draftRef.current = value ?? liveCell()
-      setEditing(true)
-      window.requestAnimationFrame(() => {
-        const target = fromFormula ? formulaRef.current : inputRef.current
-        target?.focus()
-        if (value == null) target?.select()
-        else {
-          const end = value.length
-          target?.setSelectionRange(end, end)
-        }
-      })
-    },
-    [canEdit, liveCell],
-  )
-
-  const flushSave = useCallback(async () => {
-    if (!readyRef.current || skipSave.current || !canEdit) return
-    const payload = { sheets: sheetsRef.current, activeId }
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
-      await saveWorkbook(payload)
-      setSaveState('Saved')
-    } catch (error) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
-      setSaveState(error instanceof Error ? error.message : 'Save failed')
-    }
-  }, [activeId, canEdit])
+  const [projects, setProjects] = useState<ProjectRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+  const [mode, setMode] = useState<'create' | 'edit' | 'delete' | null>(null)
+  const [form, setForm] = useState<ProjectInput>(emptyForm)
+  const [active, setActive] = useState<ProjectRecord | null>(null)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    let alive = true
-    const boot = async () => {
-      try {
-        const data = await fetchWorkbook()
-        if (!alive) return
-        const next = data.workbook.sheets.map(padSheet)
-        setSheets(next)
-        setActiveId(data.workbook.activeId || next[0]?.id || 'inventory')
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ sheets: next, activeId: data.workbook.activeId }))
-        setSaveState('Autosave on')
-      } catch {
-        if (!alive) return
-        const local = loadLocal() || templateWorkbook()
-        setSheets(local.sheets)
-        setActiveId(local.activeId)
-        setSaveState('Saved locally')
-      } finally {
-        if (!alive) return
-        readyRef.current = true
-        skipSave.current = false
-      }
-    }
-    void boot()
+    let cancelled = false
+    void fetchProjects()
+      .then((data) => {
+        if (!cancelled) setProjects(data.projects)
+      })
+      .catch((error: Error) => {
+        if (!cancelled) pushToast(error.message, 'error')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
     return () => {
-      alive = false
+      cancelled = true
     }
-  }, [])
+  }, [pushToast])
 
-  useEffect(() => {
-    if (!readyRef.current || skipSave.current || !canEdit) return
-    setSaveState('Saving…')
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ sheets, activeId }))
-    window.clearTimeout(saveTimer.current)
-    saveTimer.current = window.setTimeout(() => {
-      void flushSave()
-    }, 500)
-    return () => window.clearTimeout(saveTimer.current)
-  }, [activeId, canEdit, flushSave, sheets])
-
-  useEffect(() => {
-    const onHide = () => {
-      void flushSave()
-    }
-    window.addEventListener('beforeunload', onHide)
-    document.addEventListener('visibilitychange', onHide)
-    return () => {
-      window.removeEventListener('beforeunload', onHide)
-      document.removeEventListener('visibilitychange', onHide)
-    }
-  }, [flushSave])
-
-  const moveSel = (r: number, c: number, extend = false) => {
-    if (!sheet) return
-    const next = {
-      r: Math.max(0, Math.min(rows.length - 1, r)),
-      c: Math.max(0, Math.min(cols - 1, c)),
-    }
-    setSel(next)
-    if (!extend) setAnchor(next)
-  }
-
-  const clearRange = () => {
-    if (!canEdit || !sheet) return
-    mutateSheet((current) => {
-      const next = current.rows.map((row) => row.slice())
-      next.forEach((row, r) => {
-        row.forEach((_, c) => {
-          if (inRange({ r, c }, anchor, sel)) next[r][c] = ''
-        })
-      })
-      return { ...current, rows: next }
-    })
-  }
-
-  const copyRange = async () => {
-    if (!sheet) return
-    const r1 = Math.min(anchor.r, sel.r)
-    const r2 = Math.max(anchor.r, sel.r)
-    const c1 = Math.min(anchor.c, sel.c)
-    const c2 = Math.max(anchor.c, sel.c)
-    const text = rows
-      .slice(r1, r2 + 1)
-      .map((row) => row.slice(c1, c2 + 1).join('\t'))
-      .join('\n')
-    await navigator.clipboard.writeText(text)
-    pushToast('Copied')
-  }
-
-  const pasteAt = (text: string) => {
-    if (!canEdit || !sheet) return
-    const block = text.includes('\t')
-      ? text.replace(/\r/g, '').split('\n').map((line) => line.split('\t'))
-      : parseCsv(text)
-    if (!block.length) return
-    mutateSheet((current) => {
-      const next = current.rows.map((row) => row.slice())
-      block.forEach((line, ri) => {
-        line.forEach((value, ci) => {
-          const r = sel.r + ri
-          const c = sel.c + ci
-          while (next.length <= r) next.push(emptyRow(next[0].length))
-          while (next[r].length <= c) next.forEach((row) => row.push(''))
-          next[r][c] = value
-        })
-      })
-      return { ...current, rows: next }
-    })
-  }
-
-  const onGridKey = (event: KeyboardEvent) => {
-    if (renameId) return
-    if (event.ctrlKey || event.metaKey) {
-      const key = event.key.toLowerCase()
-      if (key === 'b') {
-        event.preventDefault()
-        applyStyle({ bold: true }, 'bold')
-        return
-      }
-      if (key === 'i') {
-        event.preventDefault()
-        applyStyle({ italic: true }, 'italic')
-        return
-      }
-      if (key === 'u') {
-        event.preventDefault()
-        applyStyle({ underline: true }, 'underline')
-        return
-      }
-      if (key === 'c' && !editing) {
-        event.preventDefault()
-        void copyRange()
-        return
-      }
-    }
-    if (editing) {
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        commitEdit()
-        moveSel(sel.r + 1, sel.c)
-      } else if (event.key === 'Tab') {
-        event.preventDefault()
-        commitEdit()
-        moveSel(sel.r, sel.c + (event.shiftKey ? -1 : 1))
-      } else if (event.key === 'Escape') {
-        event.preventDefault()
-        setEditing(false)
-        setDraft(cellValue)
-        draftRef.current = cellValue
-      }
-      return
-    }
-    if (event.key === 'Enter' || event.key === 'F2') {
-      event.preventDefault()
-      startEdit()
-      return
-    }
-    if (event.key === 'Tab') {
-      event.preventDefault()
-      moveSel(sel.r, sel.c + (event.shiftKey ? -1 : 1))
-      return
-    }
-    if (event.key === 'Delete' || event.key === 'Backspace') {
-      event.preventDefault()
-      clearRange()
-      return
-    }
-    if (event.key.startsWith('Arrow')) {
-      event.preventDefault()
-      const extend = event.shiftKey
-      if (event.key === 'ArrowUp') moveSel(sel.r - 1, sel.c, extend)
-      if (event.key === 'ArrowDown') moveSel(sel.r + 1, sel.c, extend)
-      if (event.key === 'ArrowLeft') moveSel(sel.r, sel.c - 1, extend)
-      if (event.key === 'ArrowRight') moveSel(sel.r, sel.c + 1, extend)
-      return
-    }
-    if (event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey) {
-      event.preventDefault()
-      startEdit(event.key)
-    }
-  }
-
-  const exportCsv = () => {
-    if (!sheet) return
-    const blob = new Blob([toCsv(sheet.rows)], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${sheet.name.toLowerCase().replace(/\s+/g, '-')}.csv`
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
-    pushToast(`${sheet.name} exported`)
-  }
-
-  const exportPdf = () => {
-    const win = window.open('', '_blank')
-    if (!win) {
-      pushToast('Allow popups to export PDF', 'warning')
-      return
-    }
-    const pages = sheets
-      .map((item, index) => {
-        const used = item.rows.filter((row) => row.some((cell) => String(cell).trim()))
-        const width = Math.max(...used.map((row) => row.length), 1)
-        const body = used
-          .map(
-            (row, r) =>
-              `<tr>${Array.from({ length: width }, (_, c) => {
-                const tag = r === 0 ? 'th' : 'td'
-                const style = styleToCss(item.styles?.[styleKey(r, c)], r === 0)
-                return `<${tag} style="${style}">${escapeHtml(row[c] || '')}</${tag}>`
-              }).join('')}</tr>`,
-          )
-          .join('')
-        return `<section class="${index ? 'break' : ''}"><h2>${escapeHtml(item.name)}</h2><table>${body}</table></section>`
-      })
-      .join('')
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Project workbook</title>
-      <style>
-        body{font-family:Inter,Arial,sans-serif;color:#111;padding:24px}
-        h2{margin:0 0 12px}
-        table{border-collapse:collapse;width:100%;font-size:12px}
-        th,td{border:1px solid #ccc;padding:6px 8px}
-        th{background:#0f3d4c;color:#fff}
-        .break{page-break-before:always}
-      </style></head><body>${pages}</body></html>`)
-    win.document.close()
-    win.focus()
-    win.print()
-  }
-
-  const importCsv = async (file: File) => {
-    const text = await file.text()
-    const parsed = parseCsv(text)
-    if (!parsed.length || !sheet) {
-      pushToast('CSV is empty', 'warning')
-      return
-    }
-    const headerMatch = parsed[0].every(
-      (cell, index) => (sheet.rows[0]?.[index] || '').trim().toLowerCase() === cell.trim().toLowerCase(),
-    )
-    const dataRows = headerMatch ? parsed.slice(1) : parsed
-    mutateSheet((current) => {
-      const width = Math.max(current.rows[0].length, ...parsed.map((row) => row.length), MIN_COLS)
-      const header = headerMatch ? current.rows[0].slice() : parsed[0].slice()
-      while (header.length < width) header.push('')
-      const nextRows = [
-        header,
-        ...dataRows.map((row) => {
-          const line = row.slice()
-          while (line.length < width) line.push('')
-          return line
-        }),
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return projects
+    return projects.filter((project) =>
+      [
+        project.name,
+        project.githubUrl,
+        project.githubBranch,
+        envLabel(project.env),
+        project.techStack,
+        project.deploymentMethod,
+        project.domainIp,
+        yesDetail(project.cicdEnabled, project.cicdTool),
+        project.cicdUrl,
+        project.cicdConfig,
+        yesDetail(project.dockerEnabled, project.dockerImage),
+        yesDetail(project.k8sEnabled, project.k8sCluster),
+        project.remark,
       ]
-      return { ...current, rows: nextRows, styles: headerMatch ? current.styles : headerStyles(width) }
-    })
-    pushToast(`Imported ${dataRows.length} rows into ${sheet.name}`)
-  }
-
-  const addRows = () => {
-    mutateSheet((current) => ({
-      ...current,
-      rows: [...current.rows, ...Array.from({ length: 20 }, () => emptyRow(current.rows[0].length))],
-    }))
-  }
-
-  const addColumn = () => {
-    mutateSheet((current) => ({
-      ...current,
-      rows: current.rows.map((row) => [...row, '']),
-    }))
-  }
-
-  const addSheet = () => {
-    if (!canEdit) return
-    const next = padSheet({
-      id: uid(),
-      name: `Sheet${sheets.length + 1}`,
-      rows: [['Name', 'Owner', 'Notes']],
-      styles: headerStyles(MIN_COLS),
-    })
-    setSheets((current) => [...current, next])
-    setActiveId(next.id)
-    setSel({ r: 1, c: 0 })
-    setAnchor({ r: 1, c: 0 })
-  }
-
-  const resetWorkbook = () => {
-    if (!window.confirm('Clear this workbook and restore empty DevOps sheets?')) return
-    const next = templateWorkbook()
-    sheetsRef.current = next.sheets
-    setSheets(next.sheets)
-    setActiveId(next.activeId)
-    setSel({ r: 1, c: 0 })
-    setAnchor({ r: 1, c: 0 })
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-    pushToast('Workbook reset')
-  }
-
-  if (!sheet) {
-    return (
-      <div className="sheet-page">
-        <p className="text-muted p-4">Loading workbook…</p>
-      </div>
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
     )
+  }, [projects, query])
+
+  const close = () => {
+    setMode(null)
+    setActive(null)
+    setForm(emptyForm)
+  }
+
+  const openCreate = () => {
+    setActive(null)
+    setForm(emptyForm)
+    setMode('create')
+  }
+
+  const openEdit = (project: ProjectRecord) => {
+    setActive(project)
+    setForm({
+      name: project.name,
+      githubUrl: project.githubUrl,
+      githubBranch: project.githubBranch,
+      env: project.env,
+      techStack: project.techStack,
+      deploymentMethod: project.deploymentMethod,
+      domainIp: project.domainIp,
+      cicdEnabled: project.cicdEnabled,
+      cicdTool: project.cicdTool,
+      cicdUrl: project.cicdUrl,
+      cicdConfig: project.cicdConfig,
+      dockerEnabled: project.dockerEnabled,
+      dockerImage: project.dockerImage,
+      dockerfilePath: project.dockerfilePath,
+      dockerRegistry: project.dockerRegistry,
+      k8sEnabled: project.k8sEnabled,
+      k8sCluster: project.k8sCluster,
+      k8sNamespace: project.k8sNamespace,
+      k8sManifest: project.k8sManifest,
+      remark: project.remark,
+    })
+    setMode('edit')
+  }
+
+  const setField = (key: keyof ProjectInput, value: string | boolean) => {
+    setForm((current) => {
+      const next = { ...current, [key]: value }
+      if (key === 'cicdEnabled' && value === false) {
+        next.cicdTool = ''
+        next.cicdUrl = ''
+        next.cicdConfig = ''
+      }
+      if (key === 'dockerEnabled' && value === false) {
+        next.dockerImage = ''
+        next.dockerfilePath = ''
+        next.dockerRegistry = ''
+      }
+      if (key === 'k8sEnabled' && value === false) {
+        next.k8sCluster = ''
+        next.k8sNamespace = ''
+        next.k8sManifest = ''
+      }
+      return next
+    })
+  }
+
+  const save = async () => {
+    if (!form.name.trim()) {
+      pushToast('Project name is required', 'warning')
+      return
+    }
+    setSaving(true)
+    try {
+      const payload = { ...form, name: form.name.trim() }
+      if (mode === 'edit' && active) {
+        const data = await updateProject(active.id, payload)
+        setProjects((items) => items.map((item) => (item.id === active.id ? data.project : item)))
+        pushToast('Project updated')
+      } else {
+        const data = await createProject(payload)
+        setProjects((items) => [data.project, ...items])
+        pushToast('Project added')
+      }
+      close()
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Unable to save project', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!active) return
+    setSaving(true)
+    try {
+      await deleteProject(active.id)
+      setProjects((items) => items.filter((item) => item.id !== active.id))
+      pushToast('Project deleted')
+      close()
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Unable to delete project', 'error')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
-    <div className="sheet-page">
-      <div className="sheet-hero">
+    <div className="d-flex flex-column gap-3">
+      <div className="d-flex flex-wrap justify-content-between align-items-end gap-3">
         <div>
-          <p className="page-kicker">Project register</p>
-          <h2>My Projects</h2>
+          <h2 className="page-title mb-1">My Projects</h2>
+          <p className="text-muted mb-0">Add, edit, and delete projects in this table.</p>
         </div>
-        <span className="sheet-save">{saveState}</span>
-      </div>
-      <div className="sheet-excel">
-        <div className="sheet-toolbar">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,text/csv"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              if (file) void importCsv(file)
-              event.target.value = ''
-            }}
-          />
-          <div className="sheet-group">
-            <select
-              value={currentStyle.font || 'Inter'}
-              disabled={!canEdit}
-              onChange={(event) => applyStyle({ font: event.target.value })}
-              title="Font"
-            >
-              {FONTS.map((font) => (
-                <option key={font} value={font} style={{ fontFamily: font }}>
-                  {font}
-                </option>
-              ))}
-            </select>
-            <select
-              className="sheet-size"
-              value={String(currentStyle.size || 13)}
-              disabled={!canEdit}
-              onChange={(event) => applyStyle({ size: Number(event.target.value) })}
-              title="Font size"
-            >
-              {!SIZES.includes(currentStyle.size || 13) ? (
-                <option value={currentStyle.size || 13}>{currentStyle.size || 13}</option>
-              ) : null}
-              {SIZES.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="sheet-group">
-            <button
-              type="button"
-              className={`sheet-fmt ${currentStyle.bold ? 'active' : ''}`}
-              disabled={!canEdit}
-              onClick={() => applyStyle({ bold: true }, 'bold')}
-              title="Bold (Ctrl+B)"
-            >
-              <b>B</b>
-            </button>
-            <button
-              type="button"
-              className={`sheet-fmt ${currentStyle.italic ? 'active' : ''}`}
-              disabled={!canEdit}
-              onClick={() => applyStyle({ italic: true }, 'italic')}
-              title="Italic (Ctrl+I)"
-            >
-              <i>I</i>
-            </button>
-            <button
-              type="button"
-              className={`sheet-fmt ${currentStyle.underline ? 'active' : ''}`}
-              disabled={!canEdit}
-              onClick={() => applyStyle({ underline: true }, 'underline')}
-              title="Underline (Ctrl+U)"
-            >
-              <u>U</u>
-            </button>
-          </div>
-          <div className="sheet-group">
-            <label className="sheet-color" title="Text color">
-              <span>A</span>
-              <em style={{ background: currentStyle.color || '#0f172a' }} />
-              <input
-                type="color"
-                value={currentStyle.color || '#0f172a'}
-                disabled={!canEdit}
-                onChange={(event) => applyStyle({ color: event.target.value })}
-              />
-            </label>
-            <label className="sheet-color" title="Fill color">
-              <span>■</span>
-              <em style={{ background: currentStyle.bg || '#cbd5e1' }} />
-              <input
-                type="color"
-                value={currentStyle.bg || '#ffffff'}
-                disabled={!canEdit}
-                onChange={(event) => applyStyle({ bg: event.target.value })}
-              />
-            </label>
-          </div>
-          <div className="sheet-group">
-            <button
-              type="button"
-              className={`sheet-fmt ${currentStyle.align === 'left' || !currentStyle.align ? 'active' : ''}`}
-              disabled={!canEdit}
-              onClick={() => applyStyle({ align: 'left' })}
-              title="Align left"
-            >
-              L
-            </button>
-            <button
-              type="button"
-              className={`sheet-fmt ${currentStyle.align === 'center' ? 'active' : ''}`}
-              disabled={!canEdit}
-              onClick={() => applyStyle({ align: 'center' })}
-              title="Align center"
-            >
-              C
-            </button>
-            <button
-              type="button"
-              className={`sheet-fmt ${currentStyle.align === 'right' ? 'active' : ''}`}
-              disabled={!canEdit}
-              onClick={() => applyStyle({ align: 'right' })}
-              title="Align right"
-            >
-              R
-            </button>
-          </div>
-          <div className="sheet-group sheet-group-actions">
-            <button type="button" className="sheet-tool" onClick={() => fileRef.current?.click()} disabled={!canEdit}>
-              Import
-            </button>
-            <button type="button" className="sheet-tool" onClick={exportCsv}>
-              CSV
-            </button>
-            <button type="button" className="sheet-tool" onClick={exportPdf}>
-              PDF
-            </button>
-            <button type="button" className="sheet-tool" onClick={addRows} disabled={!canEdit}>
-              + Rows
-            </button>
-            <button type="button" className="sheet-tool" onClick={addColumn} disabled={!canEdit}>
-              + Col
-            </button>
-            <button type="button" className="sheet-tool" onClick={resetWorkbook} disabled={!canEdit}>
-              Reset
-            </button>
-          </div>
-        </div>
-        <div className="sheet-formula">
-          <span>{address}</span>
-          <input
-            ref={formulaRef}
-            value={editing ? draft : cellValue}
-            readOnly={!canEdit}
-            onFocus={() => {
-              if (!editing) startEdit(undefined, true)
-            }}
-            onChange={(event) => {
-              draftRef.current = event.target.value
-              setDraft(event.target.value)
-              if (!editing) setEditing(true)
-            }}
-            onBlur={commitEdit}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault()
-                commitEdit()
-                gridRef.current?.focus()
-                moveSel(sel.r + 1, sel.c)
-              }
-            }}
-          />
-        </div>
-        <div
-          className="sheet-grid-wrap"
-          ref={gridRef}
-          tabIndex={0}
-          onKeyDown={onGridKey}
-          onPaste={(event) => {
-            if (!canEdit || editing) return
-            event.preventDefault()
-            pasteAt(event.clipboardData.getData('text/plain'))
-          }}
-        >
-          <table className="sheet-grid">
-            <thead>
-              <tr>
-                <th className="sheet-corner" />
-                {Array.from({ length: cols }, (_, c) => (
-                  <th key={c}>{colLetter(c)}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, r) => (
-                <tr key={r} className={r === 0 ? 'sheet-head-row' : undefined}>
-                  <th>{r + 1}</th>
-                  {row.map((value, c) => {
-                    const active = sel.r === r && sel.c === c
-                    const ranged = inRange({ r, c }, anchor, sel)
-                    const style = sheet.styles?.[styleKey(r, c)]
-                    const css = cellCss(style, r === 0)
-                    return (
-                      <td
-                        key={c}
-                        className={`${active ? 'active' : ''} ${ranged ? 'ranged' : ''} ${r === 0 ? 'bold' : ''}`}
-                        style={{ background: style?.bg || (r === 0 ? '#0f3d4c' : undefined) }}
-                        onMouseDown={(event) => {
-                          if (editing) commitEdit()
-                          const next = { r, c }
-                          setSel(next)
-                          if (!event.shiftKey) setAnchor(next)
-                          gridRef.current?.focus()
-                        }}
-                        onDoubleClick={() => startEdit()}
-                      >
-                        {editing && active ? (
-                          <input
-                            ref={inputRef}
-                            value={draft}
-                            style={css}
-                            onChange={(event) => {
-                              draftRef.current = event.target.value
-                              setDraft(event.target.value)
-                            }}
-                            onBlur={commitEdit}
-                            onKeyDown={onGridKey}
-                          />
-                        ) : (
-                          <span style={css}>{value}</span>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="sheet-tabs">
-          {sheets.map((item) => (
-            <div key={item.id} className={`sheet-tab ${item.id === activeId ? 'active' : ''}`}>
-              {renameId === item.id ? (
-                <input
-                  autoFocus
-                  defaultValue={item.name}
-                  onBlur={(event) => {
-                    const name = event.target.value.trim() || item.name
-                    setSheets((current) => current.map((sheetItem) => (sheetItem.id === item.id ? { ...sheetItem, name } : sheetItem)))
-                    setRenameId(null)
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
-                    if (event.key === 'Escape') setRenameId(null)
-                  }}
-                />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    commitEdit()
-                    setActiveId(item.id)
-                    setSel({ r: 1, c: 0 })
-                    setAnchor({ r: 1, c: 0 })
-                  }}
-                  onDoubleClick={() => canEdit && setRenameId(item.id)}
-                >
-                  {item.name}
-                </button>
-              )}
-              {canEdit && sheets.length > 1 ? (
-                <button
-                  type="button"
-                  className="sheet-tab-x"
-                  onClick={() => {
-                    const next = sheets.filter((sheetItem) => sheetItem.id !== item.id)
-                    setSheets(next)
-                    if (activeId === item.id) setActiveId(next[0].id)
-                  }}
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-          ))}
-          <button type="button" className="sheet-add" onClick={addSheet} disabled={!canEdit} title="Add sheet">
-            +
+        {canEdit ? (
+          <button type="button" className="btn btn-accent" onClick={openCreate}>
+            + Add project
           </button>
-          <span className="sheet-save">{usedRows} filled rows</span>
-        </div>
+        ) : null}
       </div>
+
+      <input
+        className="form-control"
+        placeholder="Search name, GitHub, domain, stack..."
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+
+      {loading ? (
+        <p className="text-muted mb-0">Loading projects…</p>
+      ) : (
+        <DataTable
+          data={filtered}
+          rowKey={(row) => row.id}
+          emptyTitle={projects.length === 0 ? 'No projects yet' : 'No projects match this search'}
+          emptyDescription={projects.length === 0 ? 'Add a project to start the register.' : 'Try a different search.'}
+          columns={[
+            { key: 'name', label: 'Project', sortable: true },
+            { key: 'githubUrl', label: 'GitHub URL', sortable: true },
+            { key: 'githubBranch', label: 'Branch', sortable: true },
+            { key: 'env', label: 'Env', sortable: true, render: (row) => envLabel(row.env) },
+            { key: 'techStack', label: 'Tech stack', sortable: true },
+            { key: 'deploymentMethod', label: 'Deployment', sortable: true },
+            { key: 'domainIp', label: 'Domain / IP', sortable: true },
+            { key: 'cicd', label: 'CI/CD', render: (row) => yesDetail(row.cicdEnabled, row.cicdTool) },
+            { key: 'docker', label: 'Docker', render: (row) => yesDetail(row.dockerEnabled, row.dockerImage) },
+            { key: 'k8s', label: 'K8s', render: (row) => yesDetail(row.k8sEnabled, row.k8sCluster) },
+            { key: 'remark', label: 'Remark' },
+          ]}
+          actions={
+            canEdit
+              ? (row) => (
+                  <div className="d-flex gap-2">
+                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => openEdit(row)}>
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => {
+                        setActive(row)
+                        setMode('delete')
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )
+              : undefined
+          }
+        />
+      )}
+
+      <Modal
+        open={mode === 'create' || mode === 'edit'}
+        title={mode === 'edit' ? 'Edit project' : 'Add project'}
+        onClose={close}
+        size="lg"
+        footer={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={close} disabled={saving}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-accent" onClick={() => void save()} disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        }
+      >
+        <div className="row g-3">
+          <div className="col-12 col-md-6">
+            <label className="form-label">Project name</label>
+            <input className="form-control" value={form.name} onChange={(event) => setField('name', event.target.value)} />
+          </div>
+          <div className="col-12 col-md-6">
+            <label className="form-label">Env</label>
+            <select className="form-select" value={form.env} onChange={(event) => setField('env', event.target.value)}>
+              {ENV_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="col-12 col-md-8">
+            <label className="form-label">GitHub URL</label>
+            <input className="form-control" value={form.githubUrl} onChange={(event) => setField('githubUrl', event.target.value)} />
+          </div>
+          <div className="col-12 col-md-4">
+            <label className="form-label">GitHub branch</label>
+            <input className="form-control" value={form.githubBranch} onChange={(event) => setField('githubBranch', event.target.value)} />
+          </div>
+          <div className="col-12 col-md-6">
+            <label className="form-label">Tech stack</label>
+            <input className="form-control" value={form.techStack} onChange={(event) => setField('techStack', event.target.value)} />
+          </div>
+          <div className="col-12 col-md-6">
+            <label className="form-label">Deployment method</label>
+            <input className="form-control" value={form.deploymentMethod} onChange={(event) => setField('deploymentMethod', event.target.value)} />
+          </div>
+          <div className="col-12 col-md-6">
+            <label className="form-label">Domain / IP</label>
+            <input className="form-control" value={form.domainIp} onChange={(event) => setField('domainIp', event.target.value)} />
+          </div>
+          <div className="col-12 col-md-6">
+            <label className="form-label">CI/CD pipeline</label>
+            <select
+              className="form-select"
+              value={form.cicdEnabled ? 'yes' : 'no'}
+              onChange={(event) => setField('cicdEnabled', event.target.value === 'yes')}
+            >
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </div>
+          {form.cicdEnabled ? (
+            <>
+              <div className="col-12 col-md-4">
+                <label className="form-label">CI/CD tool</label>
+                <input className="form-control" value={form.cicdTool} onChange={(event) => setField('cicdTool', event.target.value)} placeholder="GitHub Actions" />
+              </div>
+              <div className="col-12 col-md-4">
+                <label className="form-label">Pipeline URL</label>
+                <input className="form-control" value={form.cicdUrl} onChange={(event) => setField('cicdUrl', event.target.value)} />
+              </div>
+              <div className="col-12 col-md-4">
+                <label className="form-label">Workflow file</label>
+                <input className="form-control" value={form.cicdConfig} onChange={(event) => setField('cicdConfig', event.target.value)} placeholder=".github/workflows/deploy.yml" />
+              </div>
+            </>
+          ) : null}
+          <div className="col-12 col-md-6">
+            <label className="form-label">Docker</label>
+            <select
+              className="form-select"
+              value={form.dockerEnabled ? 'yes' : 'no'}
+              onChange={(event) => setField('dockerEnabled', event.target.value === 'yes')}
+            >
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </div>
+          <div className="col-12 col-md-6">
+            <label className="form-label">Kubernetes</label>
+            <select
+              className="form-select"
+              value={form.k8sEnabled ? 'yes' : 'no'}
+              onChange={(event) => setField('k8sEnabled', event.target.value === 'yes')}
+            >
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </div>
+          {form.dockerEnabled ? (
+            <>
+              <div className="col-12 col-md-4">
+                <label className="form-label">Docker image</label>
+                <input className="form-control" value={form.dockerImage} onChange={(event) => setField('dockerImage', event.target.value)} />
+              </div>
+              <div className="col-12 col-md-4">
+                <label className="form-label">Dockerfile path</label>
+                <input className="form-control" value={form.dockerfilePath} onChange={(event) => setField('dockerfilePath', event.target.value)} />
+              </div>
+              <div className="col-12 col-md-4">
+                <label className="form-label">Registry</label>
+                <input className="form-control" value={form.dockerRegistry} onChange={(event) => setField('dockerRegistry', event.target.value)} />
+              </div>
+            </>
+          ) : null}
+          {form.k8sEnabled ? (
+            <>
+              <div className="col-12 col-md-4">
+                <label className="form-label">Cluster</label>
+                <input className="form-control" value={form.k8sCluster} onChange={(event) => setField('k8sCluster', event.target.value)} />
+              </div>
+              <div className="col-12 col-md-4">
+                <label className="form-label">Namespace</label>
+                <input className="form-control" value={form.k8sNamespace} onChange={(event) => setField('k8sNamespace', event.target.value)} />
+              </div>
+              <div className="col-12 col-md-4">
+                <label className="form-label">Manifest / chart</label>
+                <input className="form-control" value={form.k8sManifest} onChange={(event) => setField('k8sManifest', event.target.value)} />
+              </div>
+            </>
+          ) : null}
+          <div className="col-12">
+            <label className="form-label">Remark</label>
+            <textarea className="form-control" rows={3} value={form.remark} onChange={(event) => setField('remark', event.target.value)} />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={mode === 'delete'}
+        title="Delete project"
+        onClose={close}
+        footer={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={close} disabled={saving}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-accent" onClick={() => void remove()} disabled={saving}>
+              {saving ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        }
+      >
+        <p className="mb-0">Delete {active?.name || 'this project'}? This cannot be undone.</p>
+      </Modal>
     </div>
   )
 }

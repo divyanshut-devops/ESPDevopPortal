@@ -5,7 +5,7 @@ import next from 'next'
 dotenv.config()
 process.env.NEXT_EMBED = '1'
 
-const { app: apiApp, attachApi, bootServices } = await import('./server/src/index.js')
+const { app: apiApp, bootServices } = await import('./server/src/index.js')
 
 const dev = process.env.NODE_ENV !== 'production'
 const port = Number(process.env.PORT || 3000)
@@ -24,9 +24,7 @@ const server = http.createServer((req, res) => {
   handle(req, res)
 })
 
-const terminal = attachApi()
 server.on('upgrade', (request, socket, head) => {
-  if (terminal.handleUpgrade(request, socket, head)) return
   nextUpgrade(request, socket, head)
 })
 

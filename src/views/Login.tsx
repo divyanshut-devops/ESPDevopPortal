@@ -106,7 +106,7 @@ export function Login() {
           </div>
         </div>
         <h1>ESP DevOps</h1>
-        <p>You can manage your inventory, projects, secrets, APIs, and servers from one workspace.</p>
+        <p>You can manage your inventory, projects, and secrets from one workspace.</p>
         <ul className="login-points">
           {NAV_ITEMS.filter((item) => item.path !== '/invitation').map((item) => (
             <li key={item.path}>

@@ -10,18 +10,14 @@ import mongoose from 'mongoose'
 import { connectDb, isMongoConfigured } from './db.js'
 import { sendInviteEmail, sendOtpEmail } from './mail.js'
 import { encryptSecret, decryptSecret } from './cryptoSecrets.js'
-import { publicStudio, sendStudioRequest } from './httpStudio.js'
 import multer from 'multer'
 import { Secret } from './models/Secret.js'
 import { Invitation } from './models/Invitation.js'
-import { GeneratedFile } from './models/GeneratedFile.js'
 import { DocNote } from './models/DocNote.js'
-import { Workbook } from './models/Workbook.js'
-import { Architecture } from './models/Architecture.js'
+import { Project } from './models/Project.js'
+import { GitUser } from './models/GitUser.js'
 import { Shortcut } from './models/Shortcut.js'
-import { StudioRequest } from './models/StudioRequest.js'
 import { User } from './models/User.js'
-import { generateDevArtifact, GENERATOR_KINDS, isOpenRouterConfigured, resolveOpenRouterModel } from './openRouter.js'
 import {
   deleteDriveFile,
   getDriveFile,
@@ -39,10 +35,9 @@ import {
   setPending2faCookie,
   setSessionCookie,
 } from './session.js'
-import { canSendOtp, connectRedis, isRedisReady, saveOtp, verifyStoredOtp } from './otpStore.js'
+import { canSendOtp, saveOtp, verifyStoredOtp } from './otpStore.js'
 import { generateTotpSecret, otpauthUrl, verifyTotp } from './totp.js'
 import QRCode from 'qrcode'
-import { attachDockerTerminal, dockerTerminalStatus, startDockerTerminal } from './dockerTerminal.js'
 import { accessForEmail, isAdminEmail, WORKSPACE_ROLES } from './privileges.js'
 import { addNotification, ensureUser, publicUser } from './userService.js'
 import { corsOptions } from './corsConfig.js'
@@ -232,9 +227,7 @@ app.get('/api/health/details', authUser, requireAdmin, (_req, res) => {
     ok: true,
     service: 'esp-devops-api',
     mongo: mongoReady() ? 'connected' : isMongoConfigured() ? 'connecting' : 'not-configured',
-    openrouter: isOpenRouterConfigured() ? 'configured' : 'not-configured',
     s3: isS3Configured() ? 'configured' : 'not-configured',
-    redis: isRedisReady() ? 'connected' : 'memory-fallback',
   })
 })
 
@@ -636,113 +629,6 @@ app.post('/api/network/ssl', authUser, requirePrivilege('network.view'), async (
   }
 })
 
-const memoryStudio = new Map()
-
-function studioPayload(body = {}, ownerEmail = '') {
-  return {
-    ownerEmail,
-    name: String(body.name || 'My request').trim() || 'My request',
-    method: String(body.method || 'GET').toUpperCase(),
-    url: String(body.url || '/api/auth/me'),
-    headers: Array.isArray(body.headers) ? body.headers : [],
-    queryParams: Array.isArray(body.queryParams) ? body.queryParams : [],
-    body: String(body.body || ''),
-    useSession: body.useSession !== false,
-  }
-}
-
-function memoryStudioList(email) {
-  return memoryStudio.get(email) || []
-}
-
-app.get('/api/studio/requests', authUser, requirePrivilege('postman.use'), async (req, res) => {
-  try {
-    if (mongoReady()) {
-      const items = await StudioRequest.find({ ownerEmail: req.user.email }).sort({ updatedAt: -1 })
-      return res.json({ requests: items.map(publicStudio) })
-    }
-    return res.json({ requests: memoryStudioList(req.user.email) })
-  } catch (error) {
-    return res.json({ requests: memoryStudioList(req.user.email) })
-  }
-})
-
-app.post('/api/studio/requests', authUser, requirePrivilege('postman.use'), async (req, res) => {
-  try {
-    const payload = studioPayload(req.body, req.user.email)
-    if (mongoReady()) {
-      const doc = await StudioRequest.create(payload)
-      return res.status(201).json({ request: publicStudio(doc) })
-    }
-    const request = { id: crypto.randomUUID(), ...payload, updatedAt: new Date().toISOString() }
-    memoryStudio.set(req.user.email, [request, ...memoryStudioList(req.user.email)])
-    return res.status(201).json({ request })
-  } catch (error) {
-    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to save request' })
-  }
-})
-
-app.patch('/api/studio/requests/:id', authUser, requirePrivilege('postman.use'), async (req, res) => {
-  try {
-    const body = req.body || {}
-    if (mongoReady()) {
-      const doc = await StudioRequest.findOne({ _id: req.params.id, ownerEmail: req.user.email })
-      if (!doc) return res.status(404).json({ message: 'Request not found' })
-      if (typeof body.name === 'string') doc.name = body.name.trim() || doc.name
-      if (typeof body.method === 'string') doc.method = body.method.toUpperCase()
-      if (typeof body.url === 'string') doc.url = body.url
-      if (Array.isArray(body.headers)) doc.headers = body.headers
-      if (Array.isArray(body.queryParams)) doc.queryParams = body.queryParams
-      if (typeof body.body === 'string') doc.body = body.body
-      if (typeof body.useSession === 'boolean') doc.useSession = body.useSession
-      await doc.save()
-      return res.json({ request: publicStudio(doc) })
-    }
-    const list = memoryStudioList(req.user.email)
-    const index = list.findIndex((item) => item.id === req.params.id)
-    if (index < 0) return res.status(404).json({ message: 'Request not found' })
-    const next = { ...list[index], ...studioPayload({ ...list[index], ...body }, req.user.email), id: list[index].id, updatedAt: new Date().toISOString() }
-    list[index] = next
-    memoryStudio.set(req.user.email, list)
-    return res.json({ request: next })
-  } catch (error) {
-    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to update request' })
-  }
-})
-
-app.delete('/api/studio/requests/:id', authUser, requirePrivilege('postman.use'), async (req, res) => {
-  try {
-    if (mongoReady()) {
-      const doc = await StudioRequest.findOneAndDelete({ _id: req.params.id, ownerEmail: req.user.email })
-      if (!doc) return res.status(404).json({ message: 'Request not found' })
-      return res.json({ ok: true })
-    }
-    const list = memoryStudioList(req.user.email).filter((item) => item.id !== req.params.id)
-    memoryStudio.set(req.user.email, list)
-    return res.json({ ok: true })
-  } catch (error) {
-    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to delete request' })
-  }
-})
-
-app.post('/api/studio/send', authUser, requirePrivilege('postman.use'), async (req, res) => {
-  try {
-    const body = req.body || {}
-    const host = String(req.headers.host || `127.0.0.1:${port}`)
-    const proto = host.includes('localhost') || host.startsWith('127.') ? 'http' : req.protocol || 'http'
-    const result = await sendStudioRequest({
-      method: body.method,
-      url: body.url,
-      headers: body.headers || {},
-      body: body.body,
-      token: body.useSession === false ? '' : req.headers.authorization?.replace(/^Bearer\s+/i, ''),
-      apiOrigin: `${proto}://${host}`,
-    })
-    return res.json(result)
-  } catch (error) {
-    return res.status(400).json({ message: error instanceof Error ? error.message : 'Request failed' })
-  }
-})
 
 function publicShortcut(doc) {
   return {
@@ -939,65 +825,6 @@ app.delete('/api/invitations/:id', authUser, requireDb, requireAdmin, async (req
   }
 })
 
-function publicGenerated(doc) {
-  return {
-    id: String(doc._id),
-    kind: doc.kind,
-    filename: doc.filename,
-    language: doc.language,
-    content: doc.content,
-    notes: doc.notes || '',
-    prompt: doc.prompt || '',
-    createdAt: doc.createdAt,
-  }
-}
-
-app.get('/api/generator/status', authUser, requirePrivilege('generator.use'), (_req, res) => {
-  res.json({ configured: isOpenRouterConfigured(), kinds: GENERATOR_KINDS, model: resolveOpenRouterModel(), free: true })
-})
-
-app.get('/api/generator/history', authUser, requireDb, requirePrivilege('generator.use'), async (req, res) => {
-  try {
-    const items = await GeneratedFile.find({ ownerEmail: req.user.email }).sort({ createdAt: -1 }).limit(40)
-    return res.json({ items: items.map(publicGenerated) })
-  } catch (error) {
-    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to load history' })
-  }
-})
-
-app.post('/api/generator', authUser, requireDb, requirePrivilege('generator.use'), async (req, res) => {
-  try {
-    const prompt = String(req.body?.prompt || '').trim()
-    const kind = String(req.body?.kind || 'bash')
-    if (!prompt) return res.status(400).json({ message: 'Describe what you want to generate.' })
-    if (!GENERATOR_KINDS[kind]) return res.status(400).json({ message: 'Choose a valid generator type.' })
-    const artifact = await generateDevArtifact(kind, prompt)
-    const doc = await GeneratedFile.create({
-      ownerEmail: req.user.email,
-      kind: artifact.kind,
-      filename: artifact.filename,
-      language: artifact.language,
-      content: artifact.content,
-      notes: artifact.notes,
-      prompt,
-    })
-    return res.json({ item: publicGenerated(doc) })
-  } catch (error) {
-    return res.status(error.status || 500).json({
-      message: error instanceof Error ? error.message : 'Unable to generate file',
-    })
-  }
-})
-
-app.delete('/api/generator/history/:id', authUser, requireDb, requirePrivilege('generator.use'), async (req, res) => {
-  try {
-    const doc = await GeneratedFile.findOneAndDelete({ _id: req.params.id, ownerEmail: req.user.email })
-    if (!doc) return res.status(404).json({ message: 'Generated file not found' })
-    return res.json({ ok: true })
-  } catch (error) {
-    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to delete history item' })
-  }
-})
 
 app.get('/api/drive/status', authUser, requirePrivilege('drive.view'), (_req, res) => {
   res.json({ configured: isS3Configured() })
@@ -1183,112 +1010,81 @@ app.delete('/api/docs/:id', authUser, requireDb, requirePrivilege('docs.manage')
   }
 })
 
-function defaultWorkbookSheets() {
-  const pad = (headers, extra = 40) => {
-    const cols = headers.length + 4
-    const header = [...headers, ...Array.from({ length: cols - headers.length }, () => '')]
-    const blanks = Array.from({ length: extra }, () => Array.from({ length: cols }, () => ''))
-    return [header, ...blanks]
+const memoryProjects = []
+const PROJECT_ENVS = new Set(['dev', 'staging', 'prod'])
+
+function cleanProjectText(value, max) {
+  return String(value || '').trim().slice(0, max)
+}
+
+function projectFlag(value) {
+  return value === true || value === 'true' || value === 'yes' || value === 'on'
+}
+
+function projectPayload(body = {}) {
+  const name = cleanProjectText(body.name, 120)
+  if (!name) {
+    const error = new Error('Project name is required.')
+    error.status = 400
+    throw error
   }
-  return [
-    {
-      id: 'inventory',
-      name: 'Inventory',
-      rows: pad([
-        'Project',
-        'Owner',
-        'Repo',
-        'Branch',
-        'Stack',
-        'Cloud',
-        'Region',
-        'Cluster',
-        'Namespace',
-        'Domain',
-        'Env',
-        'Status',
-        'Last deploy',
-        'Notes',
-      ]),
-    },
-    {
-      id: 'servers',
-      name: 'Servers',
-      rows: pad(['Hostname', 'IP', 'OS', 'Role', 'Project', 'Env', 'Access', 'CPU/RAM', 'Status', 'Notes']),
-    },
-    {
-      id: 'domains',
-      name: 'Domains',
-      rows: pad(['Domain', 'Project', 'Env', 'TLS expiry', 'DNS', 'CDN', 'Status', 'Notes']),
-    },
-    {
-      id: 'releases',
-      name: 'Releases',
-      rows: pad(['Project', 'Version', 'Env', 'Deployed at', 'Git SHA', 'Pipeline', 'Result', 'Notes']),
-    },
-  ]
-}
-
-function sanitizeStyle(style) {
-  if (!style || typeof style !== 'object') return null
-  const next = {}
-  if (style.bold === true) next.bold = true
-  if (style.italic === true) next.italic = true
-  if (style.underline === true) next.underline = true
-  if (typeof style.font === 'string' && style.font.trim()) next.font = style.font.trim().slice(0, 80)
-  const size = Number(style.size)
-  if (Number.isFinite(size) && size >= 8 && size <= 72) next.size = Math.round(size)
-  if (typeof style.color === 'string' && /^#([0-9a-fA-F]{6})$/.test(style.color)) next.color = style.color
-  if (typeof style.bg === 'string' && /^#([0-9a-fA-F]{6})$/.test(style.bg)) next.bg = style.bg
-  if (style.align === 'left' || style.align === 'center' || style.align === 'right') next.align = style.align
-  return Object.keys(next).length ? next : null
-}
-
-function sanitizeStyles(input, rowCount, colCount) {
-  if (!input || typeof input !== 'object') return {}
-  const next = {}
-  for (const [key, value] of Object.entries(input).slice(0, 8000)) {
-    const match = /^(\d+):(\d+)$/.exec(key)
-    if (!match) continue
-    const r = Number(match[1])
-    const c = Number(match[2])
-    if (r < 0 || c < 0 || r >= rowCount || c >= colCount) continue
-    const style = sanitizeStyle(value)
-    if (style) next[`${r}:${c}`] = style
+  const cicdEnabled = projectFlag(body.cicdEnabled)
+  const dockerEnabled = projectFlag(body.dockerEnabled)
+  const k8sEnabled = projectFlag(body.k8sEnabled)
+  return {
+    name,
+    githubUrl: cleanProjectText(body.githubUrl, 500),
+    githubBranch: cleanProjectText(body.githubBranch, 120),
+    env: PROJECT_ENVS.has(body.env) ? body.env : 'dev',
+    techStack: cleanProjectText(body.techStack, 200),
+    deploymentMethod: cleanProjectText(body.deploymentMethod, 200),
+    domainIp: cleanProjectText(body.domainIp, 200),
+    cicdEnabled,
+    cicdTool: cicdEnabled ? cleanProjectText(body.cicdTool, 120) : '',
+    cicdUrl: cicdEnabled ? cleanProjectText(body.cicdUrl, 500) : '',
+    cicdConfig: cicdEnabled ? cleanProjectText(body.cicdConfig, 300) : '',
+    dockerEnabled,
+    dockerImage: dockerEnabled ? cleanProjectText(body.dockerImage, 200) : '',
+    dockerfilePath: dockerEnabled ? cleanProjectText(body.dockerfilePath, 200) : '',
+    dockerRegistry: dockerEnabled ? cleanProjectText(body.dockerRegistry, 200) : '',
+    k8sEnabled,
+    k8sCluster: k8sEnabled ? cleanProjectText(body.k8sCluster, 200) : '',
+    k8sNamespace: k8sEnabled ? cleanProjectText(body.k8sNamespace, 200) : '',
+    k8sManifest: k8sEnabled ? cleanProjectText(body.k8sManifest, 300) : '',
+    remark: cleanProjectText(body.remark, 1000),
   }
-  return next
 }
 
-function sanitizeWorkbook(input) {
-  const source = Array.isArray(input?.sheets) ? input.sheets.slice(0, 12) : []
-  const sheets = source
-    .map((sheet, index) => {
-      const rows = Array.isArray(sheet?.rows) ? sheet.rows.slice(0, 200) : []
-      const cleaned = rows.map((row) =>
-        (Array.isArray(row) ? row : []).slice(0, 40).map((cell) => String(cell ?? '').slice(0, 2000)),
-      )
-      const width = Math.max(8, ...cleaned.map((row) => row.length), 8)
-      const normalized = cleaned.map((row) => {
-        const next = row.slice()
-        while (next.length < width) next.push('')
-        return next
-      })
-      return {
-        id: String(sheet?.id || `sheet-${index + 1}`).slice(0, 48),
-        name: String(sheet?.name || `Sheet${index + 1}`).trim().slice(0, 40) || `Sheet${index + 1}`,
-        rows: normalized,
-        styles: sanitizeStyles(sheet?.styles, normalized.length, width),
-      }
-    })
-    .filter((sheet) => sheet.rows.length)
-  const list = sheets.length ? sheets : defaultWorkbookSheets()
-  const activeId = list.some((sheet) => sheet.id === input?.activeId) ? String(input.activeId) : list[0].id
-  return { sheets: list, activeId }
-}
-
-function publicWorkbook(doc) {
-  const clean = sanitizeWorkbook(doc)
-  return { ...clean, updatedAt: doc?.updatedAt }
+function publicProject(doc) {
+  const legacyDocker = cleanProjectText(doc.docker, 200)
+  const legacyK8s = cleanProjectText(doc.k8s, 200)
+  const dockerEnabled = projectFlag(doc.dockerEnabled) || Boolean(legacyDocker)
+  const k8sEnabled = projectFlag(doc.k8sEnabled) || Boolean(legacyK8s)
+  const cicdEnabled = projectFlag(doc.cicdEnabled)
+  return {
+    id: String(doc._id || doc.id),
+    name: doc.name || '',
+    githubUrl: doc.githubUrl || '',
+    githubBranch: doc.githubBranch || '',
+    env: PROJECT_ENVS.has(doc.env) ? doc.env : 'dev',
+    techStack: doc.techStack || '',
+    deploymentMethod: doc.deploymentMethod || '',
+    domainIp: doc.domainIp || '',
+    cicdEnabled,
+    cicdTool: cicdEnabled ? doc.cicdTool || '' : '',
+    cicdUrl: cicdEnabled ? doc.cicdUrl || '' : '',
+    cicdConfig: cicdEnabled ? doc.cicdConfig || '' : '',
+    dockerEnabled,
+    dockerImage: dockerEnabled ? doc.dockerImage || legacyDocker : '',
+    dockerfilePath: dockerEnabled ? doc.dockerfilePath || '' : '',
+    dockerRegistry: dockerEnabled ? doc.dockerRegistry || '' : '',
+    k8sEnabled,
+    k8sCluster: k8sEnabled ? doc.k8sCluster || legacyK8s : '',
+    k8sNamespace: k8sEnabled ? doc.k8sNamespace || '' : '',
+    k8sManifest: k8sEnabled ? doc.k8sManifest || '' : '',
+    remark: doc.remark || '',
+    updatedAt: doc.updatedAt,
+  }
 }
 
 function canViewProjects(account) {
@@ -1299,119 +1095,228 @@ function canEditProjects(account) {
   return canViewProjects(account) && account.role !== 'Viewer'
 }
 
-app.get('/api/workbook', authUser, requireDb, async (req, res) => {
+app.get('/api/projects', authUser, async (req, res) => {
   try {
     const account = await loadAccount(req.user.email)
     if (!canViewProjects(account)) {
       return res.status(403).json({ message: 'Project access required.' })
     }
-    let doc = await Workbook.findOne({ key: 'workspace' })
-    if (!doc) {
-      const seeded = sanitizeWorkbook({ sheets: defaultWorkbookSheets(), activeId: 'inventory' })
-      doc = await Workbook.create({ key: 'workspace', ...seeded })
+    if (mongoReady()) {
+      const docs = await Project.find().sort({ updatedAt: -1 })
+      return res.json({ projects: docs.map(publicProject) })
     }
-    return res.json({ workbook: publicWorkbook(doc) })
+    return res.json({ projects: memoryProjects.map(publicProject) })
   } catch (error) {
-    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to load workbook' })
+    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to load projects' })
   }
 })
 
-app.put('/api/workbook', authUser, requireDb, requirePrivilege('projects.manage', 'projects.view'), async (req, res) => {
+app.post('/api/projects', authUser, async (req, res) => {
   try {
     const account = await loadAccount(req.user.email)
     if (!canEditProjects(account)) {
-      return res.status(403).json({ message: 'Editing the project register requires a Developer, DevOps, or Admin role.' })
+      return res.status(403).json({ message: 'Editing projects requires a Developer, DevOps, or Admin role.' })
     }
-    const next = sanitizeWorkbook(req.body)
-    const doc = await Workbook.findOneAndUpdate(
-      { key: 'workspace' },
-      { $set: next },
-      { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true },
-    )
-    return res.json({ workbook: publicWorkbook(doc) })
+    const payload = projectPayload(req.body)
+    if (mongoReady()) {
+      const doc = await Project.create(payload)
+      return res.status(201).json({ project: publicProject(doc) })
+    }
+    const project = { id: crypto.randomUUID(), ...payload, updatedAt: new Date().toISOString() }
+    memoryProjects.unshift(project)
+    return res.status(201).json({ project: publicProject(project) })
   } catch (error) {
-    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to save workbook' })
+    return res.status(error.status || 500).json({ message: error instanceof Error ? error.message : 'Unable to save project' })
   }
 })
 
-function sanitizeArchitecture(input = {}) {
-  const nodes = Array.isArray(input.nodes) ? input.nodes.slice(0, 200) : []
-  const edges = Array.isArray(input.edges) ? input.edges.slice(0, 400) : []
-  const strokes = Array.isArray(input.strokes) ? input.strokes.slice(0, 120) : []
-  const notes = Array.isArray(input.notes) ? input.notes.slice(0, 80) : []
+app.put('/api/projects/:id', authUser, async (req, res) => {
+  try {
+    const account = await loadAccount(req.user.email)
+    if (!canEditProjects(account)) {
+      return res.status(403).json({ message: 'Editing projects requires a Developer, DevOps, or Admin role.' })
+    }
+    const payload = projectPayload(req.body)
+    if (mongoReady()) {
+      const doc = await Project.findByIdAndUpdate(req.params.id, payload, { returnDocument: 'after' })
+      if (!doc) return res.status(404).json({ message: 'Project not found' })
+      return res.json({ project: publicProject(doc) })
+    }
+    const index = memoryProjects.findIndex((item) => item.id === req.params.id)
+    if (index < 0) return res.status(404).json({ message: 'Project not found' })
+    memoryProjects[index] = { ...memoryProjects[index], ...payload, updatedAt: new Date().toISOString() }
+    return res.json({ project: publicProject(memoryProjects[index]) })
+  } catch (error) {
+    return res.status(error.status || 500).json({ message: error instanceof Error ? error.message : 'Unable to update project' })
+  }
+})
+
+app.delete('/api/projects/:id', authUser, async (req, res) => {
+  try {
+    const account = await loadAccount(req.user.email)
+    if (!canEditProjects(account)) {
+      return res.status(403).json({ message: 'Editing projects requires a Developer, DevOps, or Admin role.' })
+    }
+    if (mongoReady()) {
+      const doc = await Project.findByIdAndDelete(req.params.id)
+      if (!doc) return res.status(404).json({ message: 'Project not found' })
+      return res.json({ ok: true })
+    }
+    const index = memoryProjects.findIndex((item) => item.id === req.params.id)
+    if (index < 0) return res.status(404).json({ message: 'Project not found' })
+    memoryProjects.splice(index, 1)
+    return res.json({ ok: true })
+  } catch (error) {
+    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to delete project' })
+  }
+})
+
+const GIT_USER_SEED = [
+  { companyUser: 'Disha', username: 'Dishaesp1', remark: 'Active' },
+  { companyUser: 'Akshat', username: 'AkshatEsp12', remark: 'Active' },
+  { companyUser: 'Sunil', username: 'Sunilt2810', remark: 'Active' },
+  { companyUser: 'Arin', username: 'Arin012', remark: 'Active' },
+  { companyUser: 'Amit', username: 'amttiwari', remark: 'Active' },
+  { companyUser: 'Ajay', username: 'ajaydesp', remark: 'Active' },
+  { companyUser: 'Pawan', username: 'espsofttech-pawan', remark: 'Active' },
+  { companyUser: 'Devendra', username: 'TheDevShukla', remark: 'Active' },
+  { companyUser: 'Amir', username: 'amiresp8622', remark: 'Active' },
+]
+
+const memoryGitUsers = []
+let gitSeedChecked = false
+
+function gitUserPayload(body = {}) {
+  const companyUser = cleanProjectText(body.companyUser, 120)
+  const username = cleanProjectText(body.username, 120)
+  if (!companyUser || !username) {
+    const error = new Error('Company user and username are required.')
+    error.status = 400
+    throw error
+  }
   return {
-    title: String(input.title || 'System architecture').slice(0, 120),
-    nodes: nodes.map((node) => ({
-      id: String(node.id || crypto.randomUUID()),
-      kind: String(node.kind || 'svc').slice(0, 24),
-      label: String(node.label || 'Service').slice(0, 80),
-      x: Number(node.x) || 40,
-      y: Number(node.y) || 40,
-      w: Math.min(Math.max(Number(node.w) || 140, 40), 720),
-      h: Math.min(Math.max(Number(node.h) || 40, 40), 480),
-      color: String(node.color || '#6366f1').slice(0, 20),
-    })),
-    edges: edges.map((edge) => ({
-      id: String(edge.id || crypto.randomUUID()),
-      from: String(edge.from || ''),
-      to: String(edge.to || ''),
-      label: String(edge.label || '').slice(0, 60),
-    })),
-    strokes: strokes.map((stroke) => ({
-      id: String(stroke.id || crypto.randomUUID()),
-      color: String(stroke.color || '#6366f1').slice(0, 20),
-      points: Array.isArray(stroke.points)
-        ? stroke.points.slice(0, 800).map((point) => ({ x: Number(point.x) || 0, y: Number(point.y) || 0 }))
-        : [],
-    })),
-    notes: notes.map((note) => ({
-      id: String(note.id || crypto.randomUUID()),
-      text: String(note.text || 'Note').slice(0, 160),
-      x: Number(note.x) || 40,
-      y: Number(note.y) || 40,
-    })),
+    companyUser,
+    username,
+    remark: cleanProjectText(body.remark, 200),
   }
 }
 
-function publicArchitecture(doc) {
-  return { ...sanitizeArchitecture(doc), updatedAt: doc?.updatedAt }
+function publicGitUser(doc) {
+  return {
+    id: String(doc._id || doc.id),
+    companyUser: doc.companyUser || '',
+    username: doc.username || '',
+    remark: doc.remark || '',
+    updatedAt: doc.updatedAt,
+  }
 }
 
-let memoryArchitecture = sanitizeArchitecture({})
+function canViewGitUsers(account) {
+  return Boolean(account?.privileges?.includes('git.view'))
+}
 
-app.get('/api/architecture', authUser, async (req, res) => {
-  try {
-    if (mongoReady()) {
-      let doc = await Architecture.findOne({ key: 'workspace' })
-      if (!doc) doc = await Architecture.create({ key: 'workspace', ...memoryArchitecture })
-      memoryArchitecture = sanitizeArchitecture(doc)
-      return res.json({ board: publicArchitecture(doc) })
+function canEditGitUsers(account) {
+  return canViewGitUsers(account) && account.role !== 'Viewer'
+}
+
+async function seedGitUsers() {
+  if (gitSeedChecked) return
+  if (!mongoReady()) {
+    if (memoryGitUsers.length === 0) {
+      for (const item of GIT_USER_SEED) {
+        memoryGitUsers.push({ id: crypto.randomUUID(), ...item, updatedAt: new Date().toISOString() })
+      }
     }
-    return res.json({ board: { ...memoryArchitecture, updatedAt: new Date().toISOString() } })
+    return
+  }
+  const count = await GitUser.countDocuments()
+  if (count === 0) await GitUser.insertMany(GIT_USER_SEED)
+  gitSeedChecked = true
+}
+
+app.get('/api/git-users', authUser, async (req, res) => {
+  try {
+    const account = await loadAccount(req.user.email)
+    if (!canViewGitUsers(account)) {
+      return res.status(403).json({ message: 'Git user access required.' })
+    }
+    await seedGitUsers()
+    if (mongoReady()) {
+      const docs = await GitUser.find().sort({ createdAt: 1 })
+      return res.json({ users: docs.map(publicGitUser) })
+    }
+    return res.json({ users: memoryGitUsers.map(publicGitUser) })
   } catch (error) {
-    return res.json({ board: { ...memoryArchitecture, updatedAt: new Date().toISOString() } })
+    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to load git users' })
   }
 })
 
-app.put('/api/architecture', authUser, async (req, res) => {
+app.post('/api/git-users', authUser, async (req, res) => {
   try {
-    const account = req.account || (await loadAccount(req.user.email))
-    if (account.role === 'Viewer') {
-      return res.status(403).json({ message: 'Viewers can look at the board but cannot save changes.' })
+    const account = await loadAccount(req.user.email)
+    if (!canEditGitUsers(account)) {
+      return res.status(403).json({ message: 'Editing git users requires a Developer, DevOps, or Admin role.' })
     }
-    const next = sanitizeArchitecture(req.body)
-    memoryArchitecture = next
+    const payload = gitUserPayload(req.body)
     if (mongoReady()) {
-      const doc = await Architecture.findOneAndUpdate(
-        { key: 'workspace' },
-        { $set: next },
-        { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true },
-      )
-      return res.json({ board: publicArchitecture(doc) })
+      const doc = await GitUser.create(payload)
+      return res.status(201).json({ user: publicGitUser(doc) })
     }
-    return res.json({ board: { ...next, updatedAt: new Date().toISOString() } })
+    if (memoryGitUsers.some((item) => item.username.toLowerCase() === payload.username.toLowerCase())) {
+      return res.status(409).json({ message: 'That username is already in the list.' })
+    }
+    const user = { id: crypto.randomUUID(), ...payload, updatedAt: new Date().toISOString() }
+    memoryGitUsers.push(user)
+    return res.status(201).json({ user: publicGitUser(user) })
   } catch (error) {
-    return res.json({ board: { ...memoryArchitecture, updatedAt: new Date().toISOString() } })
+    if (error?.code === 11000) return res.status(409).json({ message: 'That username is already in the list.' })
+    return res.status(error.status || 500).json({ message: error instanceof Error ? error.message : 'Unable to save git user' })
+  }
+})
+
+app.put('/api/git-users/:id', authUser, async (req, res) => {
+  try {
+    const account = await loadAccount(req.user.email)
+    if (!canEditGitUsers(account)) {
+      return res.status(403).json({ message: 'Editing git users requires a Developer, DevOps, or Admin role.' })
+    }
+    const payload = gitUserPayload(req.body)
+    if (mongoReady()) {
+      const doc = await GitUser.findByIdAndUpdate(req.params.id, payload, { returnDocument: 'after', runValidators: true })
+      if (!doc) return res.status(404).json({ message: 'Git user not found' })
+      return res.json({ user: publicGitUser(doc) })
+    }
+    const index = memoryGitUsers.findIndex((item) => item.id === req.params.id)
+    if (index < 0) return res.status(404).json({ message: 'Git user not found' })
+    const duplicate = memoryGitUsers.some(
+      (item, itemIndex) => itemIndex !== index && item.username.toLowerCase() === payload.username.toLowerCase(),
+    )
+    if (duplicate) return res.status(409).json({ message: 'That username is already in the list.' })
+    memoryGitUsers[index] = { ...memoryGitUsers[index], ...payload, updatedAt: new Date().toISOString() }
+    return res.json({ user: publicGitUser(memoryGitUsers[index]) })
+  } catch (error) {
+    if (error?.code === 11000) return res.status(409).json({ message: 'That username is already in the list.' })
+    return res.status(error.status || 500).json({ message: error instanceof Error ? error.message : 'Unable to update git user' })
+  }
+})
+
+app.delete('/api/git-users/:id', authUser, async (req, res) => {
+  try {
+    const account = await loadAccount(req.user.email)
+    if (!canEditGitUsers(account)) {
+      return res.status(403).json({ message: 'Editing git users requires a Developer, DevOps, or Admin role.' })
+    }
+    if (mongoReady()) {
+      const doc = await GitUser.findByIdAndDelete(req.params.id)
+      if (!doc) return res.status(404).json({ message: 'Git user not found' })
+      return res.json({ ok: true })
+    }
+    const index = memoryGitUsers.findIndex((item) => item.id === req.params.id)
+    if (index < 0) return res.status(404).json({ message: 'Git user not found' })
+    memoryGitUsers.splice(index, 1)
+    return res.json({ ok: true })
+  } catch (error) {
+    return res.status(500).json({ message: error instanceof Error ? error.message : 'Unable to delete git user' })
   }
 })
 
@@ -1441,42 +1346,6 @@ function sanitizePreferences(input) {
   return next
 }
 
-app.get('/api/terminal/status', authUser, async (req, res) => {
-  const account = await loadAccount(req.user.email)
-  if (!account.privileges?.includes('ssh.connect')) {
-    return res.status(403).json({ message: 'Terminal access required.' })
-  }
-  try {
-    return res.json(await dockerTerminalStatus())
-  } catch (error) {
-    return res.status(500).json({
-      ready: false,
-      running: false,
-      image: process.env.DOCKER_TERMINAL_IMAGE || 'esp-devops-linux:24.04',
-      compose: 'docker-compose.yml',
-      message: error instanceof Error ? error.message : 'Unable to check Docker',
-    })
-  }
-})
-
-app.post('/api/terminal/up', authUser, async (req, res) => {
-  const account = await loadAccount(req.user.email)
-  if (!account.privileges?.includes('ssh.connect')) {
-    return res.status(403).json({ message: 'Terminal access required.' })
-  }
-  try {
-    const status = await startDockerTerminal()
-    return res.status(status.running ? 200 : 503).json(status)
-  } catch (error) {
-    return res.status(500).json({
-      ready: false,
-      running: false,
-      compose: 'docker-compose.yml',
-      message: error instanceof Error ? error.message : 'Unable to start docker compose',
-    })
-  }
-})
-
 app.use((error, req, res, next) => {
   console.error('API error:', error instanceof Error ? error.message : error)
   if (res.headersSent) return next(error)
@@ -1485,29 +1354,18 @@ app.use((error, req, res, next) => {
 
 export { app, jwtSecret, loadAccount }
 
-export function attachApi() {
-  return attachDockerTerminal(null, {
-    jwtSecret,
-    resolveAccess: async (email) => loadAccount(email),
-  })
-}
-
 export async function bootServices() {
   assertRuntimeSecrets()
   try {
     await connectDb()
+    await seedGitUsers()
   } catch (error) {
     console.error('MongoDB connection failed:', error instanceof Error ? error.message : error)
   }
-  await connectRedis()
 }
 
 if (process.env.NEXT_EMBED !== '1') {
   const httpServer = http.createServer(app)
-  const terminal = attachApi()
-  httpServer.on('upgrade', (request, socket, head) => {
-    terminal.handleUpgrade(request, socket, head)
-  })
   httpServer.listen(port, async () => {
     console.log(`ESP DevOps API running on http://localhost:${port}`)
     await bootServices()

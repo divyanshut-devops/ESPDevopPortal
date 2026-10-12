@@ -31,22 +31,12 @@ import {
   sendTestNotification,
   type SettingsPayload,
 } from '../api/account'
-import {
-  defaultUser,
-  initialCollections,
-  initialNetwork,
-  initialNotifications,
-  initialProjects,
-  initialServers,
-} from '../data/mockData'
+import { fetchProjects, type ProjectRecord } from '../api/projects'
 import type {
   AccountUser,
-  ApiCollection,
   AppNotification,
   AppPreferences,
-  NetworkResource,
   NotificationPrefs,
-  Project,
   SecretVariable,
   Shortcut,
   ThemeMode,
@@ -80,24 +70,15 @@ interface AppContextValue {
   applyAccount: (user: AccountUser) => void
   toasts: ToastMessage[]
   pushToast: (message: string, type?: ToastType) => void
-  projects: Project[]
-  addProject: (project: Omit<Project, 'id'>) => void
-  updateProject: (project: Project) => void
-  deleteProject: (id: string) => void
+  projects: ProjectRecord[]
   secrets: SecretVariable[]
   addSecret: (secret: Omit<SecretVariable, 'id'>) => Promise<void>
   updateSecret: (secret: SecretVariable) => Promise<void>
   deleteSecret: (id: string) => Promise<void>
-  network: NetworkResource[]
-  addNetwork: (resource: Omit<NetworkResource, 'id'>) => void
-  updateNetwork: (resource: NetworkResource) => void
-  deleteNetwork: (id: string) => void
   shortcuts: Shortcut[]
   addShortcut: (shortcut: Omit<Shortcut, 'id'>) => Promise<void>
   updateShortcut: (shortcut: Shortcut) => Promise<void>
   deleteShortcut: (id: string) => Promise<void>
-  collections: ApiCollection[]
-  servers: typeof initialServers
   isAuthenticated: boolean
   ready: boolean
   isAdmin: boolean
@@ -111,6 +92,18 @@ const AppContext = createContext<AppContextValue | null>(null)
 const THEME_KEY = 'esp-theme'
 const SIDEBAR_KEY = 'esp-sidebar-collapsed'
 const USER_KEY = 'esp-user'
+
+const emptyProfile: UserProfile = {
+  name: '',
+  email: '',
+  role: 'Viewer',
+  team: '',
+  workspaceName: 'ESP DevOps',
+  timezone: 'UTC',
+  dateFormat: 'YYYY-MM-DD',
+  privileges: [],
+  avatarUrl: '',
+}
 
 function filterNotifications(items: AppNotification[], prefs: NotificationPrefs) {
   if (!prefs.inApp) return []
@@ -127,12 +120,12 @@ function profileFromAccount(user: AccountUser): UserProfile {
   const role = isAdminEmail(email) ? 'Admin' : normalizeRole(user.role)
   return {
     email,
-    name: user.name || defaultUser.name,
+    name: user.name || email.split('@')[0] || 'User',
     role,
-    team: isAdminEmail(email) ? 'Administration' : user.team || defaultUser.team,
-    workspaceName: user.workspaceName || defaultUser.workspaceName,
-    timezone: user.timezone || defaultUser.timezone,
-    dateFormat: user.dateFormat || defaultUser.dateFormat,
+    team: isAdminEmail(email) ? 'Administration' : user.team || '',
+    workspaceName: user.workspaceName || 'ESP DevOps',
+    timezone: user.timezone || 'UTC',
+    dateFormat: user.dateFormat || 'YYYY-MM-DD',
     privileges: user.privileges?.length ? user.privileges : privilegesForEmail(email, role),
     avatarUrl: user.avatarUrl || '',
   }
@@ -143,7 +136,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>('dark')
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [profile, setProfile] = useState<UserProfile>(defaultUser)
+  const [profile, setProfile] = useState<UserProfile>(emptyProfile)
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefs>({
     inApp: true,
     email: true,
@@ -160,14 +153,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     twoFactorEnabled: false,
     showClock: true,
   })
-  const [notifications, setNotifications] = useState(initialNotifications)
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [toasts, setToasts] = useState<ToastMessage[]>([])
-  const [projects, setProjects] = useState(initialProjects)
+  const [projects, setProjects] = useState<ProjectRecord[]>([])
   const [secrets, setSecrets] = useState<SecretVariable[]>([])
-  const [network, setNetwork] = useState(initialNetwork)
   const [shortcuts, setShortcuts] = useState<Shortcut[]>([])
-  const [collections] = useState(initialCollections)
-  const [servers] = useState(initialServers)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
 
   useEffect(() => {
@@ -319,6 +309,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!isAuthenticated) {
       setSecrets([])
       setShortcuts([])
+      setProjects([])
       return undefined
     }
     let cancelled = false
@@ -335,6 +326,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         if (!cancelled) setShortcuts([])
+      })
+    void fetchProjects()
+      .then((data) => {
+        if (!cancelled) setProjects(data.projects)
+      })
+      .catch(() => {
+        if (!cancelled) setProjects([])
       })
     return () => {
       cancelled = true
@@ -410,25 +408,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toasts,
       pushToast,
       projects,
-      addProject: (project) => setProjects((current) => [{ ...project, id: uid() }, ...current]),
-      updateProject: (project) =>
-        setProjects((current) => current.map((item) => (item.id === project.id ? project : item))),
-      deleteProject: (id) => setProjects((current) => current.filter((item) => item.id !== id)),
       secrets,
       addSecret,
       updateSecret,
       deleteSecret,
-      network,
-      addNetwork: (resource) => setNetwork((current) => [{ ...resource, id: uid() }, ...current]),
-      updateNetwork: (resource) =>
-        setNetwork((current) => current.map((item) => (item.id === resource.id ? resource : item))),
-      deleteNetwork: (id) => setNetwork((current) => current.filter((item) => item.id !== id)),
       shortcuts,
       addShortcut,
       updateShortcut,
       deleteShortcut,
-      collections,
-      servers,
       isAuthenticated,
       ready,
       isAdmin,
@@ -460,13 +447,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addSecret,
       updateSecret,
       deleteSecret,
-      network,
       shortcuts,
       addShortcut,
       updateShortcut,
       deleteShortcut,
-      collections,
-      servers,
       isAuthenticated,
       ready,
       isAdmin,

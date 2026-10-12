@@ -6,15 +6,11 @@
   "scripts": {
     "dev": "node server.mjs",
     "build": "next build",
-    "start": "node server.mjs",
-    "up": "docker compose up --build",
-    "down": "docker compose down"
+    "start": "node server.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",
     "@fortune-sheet/react": "^1.0.4",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "bootstrap": "^5.3.8",
     "bootstrap-icons": "^1.13.1",
     "cors": "^2.8.5",
@@ -27,9 +23,7 @@
     "nodemailer": "^7.0.9",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "redis": "^4.7.1",
-    "ws": "^8.22.0"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

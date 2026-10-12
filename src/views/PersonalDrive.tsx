@@ -119,7 +119,7 @@ export function PersonalDrive() {
         <div className="drive-empty">
           {files.length === 0
             ? configured
-              ? 'No files yet. Upload a file or save one from Dev Generator.'
+              ? 'No files yet. Upload a file to get started.'
               : 'Drive is ready. Files will appear here after S3 credentials are added.'
             : 'No files match this search.'}
         </div>

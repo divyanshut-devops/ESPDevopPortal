@@ -8,15 +8,12 @@ export const DASHBOARD_ITEM: NavItem = {
 
 export const NAV_ITEMS: NavItem[] = [
   { path: '/project-inventory', label: 'My Projects', icon: 'bi-folder2-open' },
+  { path: '/git-usernames', label: 'ESP Git Username', icon: 'bi-github' },
   { path: '/secrets-env', label: 'Secrets', icon: 'bi-key' },
   { path: '/network-management', label: 'Network', icon: 'bi-hdd-network' },
-  { path: '/api-testing', label: 'API Studio', icon: 'bi-send' },
-  { path: '/dev-generator', label: 'Dev Generators', icon: 'bi-cpu' },
   { path: '/quick-access', label: 'Quick Access', icon: 'bi-lightning-charge' },
   { path: '/personal-drive', label: 'Personal Drive', icon: 'bi-cloud-arrow-up' },
   { path: '/documentation', label: 'Documentation', icon: 'bi-journal-text' },
-  { path: '/architecture', label: 'Architecture', icon: 'bi-bezier2' },
-  { path: '/terminal', label: 'Terminal', icon: 'bi-terminal' },
   { path: '/settings', label: 'Settings', icon: 'bi-gear' },
 ]
 

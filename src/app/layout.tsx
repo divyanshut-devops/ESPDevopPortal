@@ -7,7 +7,7 @@ import { Providers } from './providers'
 
 export const metadata: Metadata = {
   title: 'ESP DevOps Portal',
-  description: 'Manage projects, secrets, APIs, and Linux terminals in one ESP workspace.',
+  description: 'Manage projects, secrets, and APIs in one ESP workspace.',
   manifest: '/manifest.webmanifest',
   applicationName: 'ESP DevOps',
   appleWebApp: {

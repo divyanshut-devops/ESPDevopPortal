@@ -30,8 +30,12 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
-      { source: '/postman', destination: '/api-testing', permanent: false },
-      { source: '/ssh-terminal', destination: '/terminal', permanent: false },
+      { source: '/api-testing', destination: '/dashboard', permanent: false },
+      { source: '/dev-generator', destination: '/dashboard', permanent: false },
+      { source: '/architecture', destination: '/dashboard', permanent: false },
+      { source: '/terminal', destination: '/dashboard', permanent: false },
+      { source: '/postman', destination: '/dashboard', permanent: false },
+      { source: '/ssh-terminal', destination: '/dashboard', permanent: false },
       { source: '/daily-todos', destination: '/dashboard', permanent: false },
     ]
   },
